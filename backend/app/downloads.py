@@ -10,15 +10,30 @@ class ExportedFile:
     name: str
     path: Path
     size: int
+    original_name: str = ''
+    task_id: str | None = None
+    row_index: int | None = None
 
     def public(self):
-        return {'id': self.id, 'name': self.name, 'size': self.size}
+        return {'id': self.id, 'name': self.name, 'size': self.size, 'original_name': self.original_name,
+                'task_id': self.task_id, 'row_index': self.row_index}
 
 
 class DownloadStore:
     def __init__(self, directory: Path):
         self.directory = directory.resolve()
         self.files: dict[str, ExportedFile] = {}
+        self.repository = None
+        self.task_context = (None, None)
+
+    def bind_repository(self, repository):
+        self.repository = repository
+        for metadata in repository.files():
+            path = Path(metadata['path']).resolve()
+            # Only the configured export directory is exposed by file endpoints.
+            if path.parent == self.directory:
+                self.files[metadata['id']] = ExportedFile(metadata['id'], metadata['name'], path, metadata['size'],
+                    metadata.get('original_name', ''), metadata.get('task_id'), metadata.get('row_index'))
 
     async def save(self, download, name_parts: list[str]) -> str:
         self.directory.mkdir(parents=True, exist_ok=True)
@@ -37,7 +52,11 @@ class DownloadStore:
         except BaseException:
             path.unlink(missing_ok=True)
             raise
-        self.files[identity] = ExportedFile(identity, path.name, path, path.stat().st_size)
+        task_id, row_index = self.task_context
+        entry = ExportedFile(identity, path.name, path, path.stat().st_size, raw, task_id, row_index)
+        if self.repository:
+            self.repository.register_file({**entry.public(), 'path': str(path)})
+        self.files[identity] = entry
         return identity
 
     def list(self):

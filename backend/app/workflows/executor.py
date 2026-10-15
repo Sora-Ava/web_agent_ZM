@@ -4,10 +4,11 @@ from pydantic import BaseModel, Field
 
 from ..contracts import BrowserAction
 from .models import WorkflowDefinition, site_key, validate_parameters
+from ..tasks.control import TaskStopped
 
 
 class RunResult(BaseModel):
-    status: Literal['success', 'no_data', 'failed']
+    status: Literal['success', 'no_data', 'failed', 'stopped']
     message: str
     steps: list[dict] = Field(default_factory=list)
     file_ids: list[str] = Field(default_factory=list)
@@ -25,13 +26,15 @@ class WorkflowExecutor:
         locator = session.page.locator(session.settings.logged_in_selector)
         return await locator.count() == 1 and await locator.is_visible()
 
-    async def execute(self, definition: WorkflowDefinition, values: dict[str, str], emit=None) -> RunResult:
+    async def execute(self, definition: WorkflowDefinition, values: dict[str, str], emit=None, checkpoint=None) -> RunResult:
         steps, file_ids = [], []
         try:
             definition = WorkflowDefinition.model_validate(definition.model_dump())
             values = validate_parameters(definition, values)
             if definition.site_key != site_key(self.session.settings.site_url):
                 raise ValueError('当前网站与流程所属系统不一致，请检查 SITE_URL')
+            if checkpoint:
+                await checkpoint()
             await self.session.start()
             await self.session.page.goto(definition.entry_url, wait_until='domcontentloaded')
             if not await self._logged_in():
@@ -43,6 +46,8 @@ class WorkflowExecutor:
                     raise ValueError('流程入口未处于已登录状态')
             self.session.status = 'ready'
             for index, step in enumerate(definition.steps):
+                if checkpoint:
+                    await checkpoint()
                 outcome = 'continue'
                 if step.condition:
                     locator = self.session.locator(step.condition.target)
@@ -69,6 +74,8 @@ class WorkflowExecutor:
                 steps.append(record)
                 if emit:
                     await emit({'type': 'workflow_step', **record})
+                if checkpoint:
+                    await checkpoint()
                 if result['status'] != 'success':
                     return RunResult(status='failed', message=f'步骤“{step.name}”失败：{result["message"]}', steps=steps, file_ids=file_ids)
                 if outcome == 'no_data':
@@ -76,6 +83,8 @@ class WorkflowExecutor:
                 if outcome == 'finish':
                     return RunResult(status='success', message='条件分支已结束流程', steps=steps, file_ids=file_ids)
             return RunResult(status='success', message='标准流程执行完成', steps=steps, file_ids=file_ids)
+        except TaskStopped:
+            return RunResult(status='stopped', message='已在当前操作结束后停止，保留已有结果和文件', steps=steps, file_ids=file_ids)
         except ValueError as exc:
             return RunResult(status='failed', message=self.session.settings.redact(str(exc)), steps=steps, file_ids=file_ids)
         except Exception as exc:

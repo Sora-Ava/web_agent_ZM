@@ -51,6 +51,7 @@ async def reset_recording(request: Request):
         raise HTTPException(409, '浏览器忙碌，不能重置录制')
     request.app.state.runner.agent.history = []
     request.app.state.runner.commands.clear()
+    request.app.state.tasks.authoring = True
     return request.app.state.repository.reset_draft()
 
 
