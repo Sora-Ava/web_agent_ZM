@@ -24,7 +24,7 @@ def local_app(tmp_path):
     sock.bind(('127.0.0.1', 0))
     port = sock.getsockname()[1]
     url = f'http://127.0.0.1:{port}'
-    settings = Settings(_env_file=None, site_url=url + '/demo/login', download_dir=tmp_path,
+    settings = Settings(_env_file=None, site_url=url + '/demo/login', download_dir=tmp_path, database_path=tmp_path / 'agent.sqlite3',
                         frontend_origin=url, llm_base_url='http://fixture-model/v1', llm_model='fixture')
     app = create_app(settings)
     requests = []

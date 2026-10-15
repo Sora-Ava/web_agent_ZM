@@ -31,7 +31,7 @@ def demo_url():
 
 @pytest_asyncio.fixture
 async def session(tmp_path, demo_url):
-    settings = Settings(_env_file=None, site_url=demo_url + '/demo/login', download_dir=tmp_path,
+    settings = Settings(_env_file=None, site_url=demo_url + '/demo/login', download_dir=tmp_path, database_path=tmp_path / 'agent.sqlite3',
                         headless=True, action_timeout_ms=3000, query_timeout_ms=3000, download_timeout_ms=3000)
     s = BrowserSession(settings)
     await s.start()

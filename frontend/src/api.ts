@@ -2,7 +2,7 @@ export type Result = {status:'success'|'failed'|'ambiguous';message:string;file_
 export type Command = {id:string;instruction:string;status:string;result:Result|null};
 export type ExportFile = {id:string;name:string;size:number};
 export type AgentEvent = {type:string;seq?:number;message?:string;result?:Result;action?:string;model_calls?:number;elapsed_s?:number};
-export type Snapshot = {session:{status:string;current_url:string|null};commands:Command[];files:ExportFile[];events:AgentEvent[]};
+export type Snapshot = {session:{status:string;current_url:string|null};commands:Command[];files:ExportFile[];events:AgentEvent[];workflows?:WorkflowSummary[];recording?:{revision:string;step_count:number;warnings:string[]}|null;run?:WorkflowRun|null};
 
 export async function api<T>(path:string, options:RequestInit={}):Promise<T>{
   const response=await fetch('/api'+path,{...options,headers:{'Content-Type':'application/json',...options.headers}});
@@ -10,3 +10,4 @@ export async function api<T>(path:string, options:RequestInit={}):Promise<T>{
   return response.json();
 }
 export function socketUrl(path:string){return `${location.protocol==='https:'?'wss':'ws'}://${location.host}/api${path}`;}
+import type { WorkflowRun, WorkflowSummary } from './workflows';

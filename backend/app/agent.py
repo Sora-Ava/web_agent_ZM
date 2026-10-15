@@ -75,9 +75,11 @@ class StepAgent:
                     if len(matches) == 1:
                         target['role'] = matches[0]['role']
                 action = BrowserAction.model_validate(arguments)
+                url_before = session.page.url
                 last = await session.execute(action)
                 if emit:
-                    await emit({'type': 'step_result', 'action': action.kind, 'result': last.model_dump()})
+                    await emit({'type': 'step_result', 'action': action.kind, 'result': last.model_dump(),
+                                'record_action': action.model_dump(), 'url_before': url_before})
                 if last.status != 'success':
                     return last
                 # Send the validated/normalized arguments back, not the malformed original.
