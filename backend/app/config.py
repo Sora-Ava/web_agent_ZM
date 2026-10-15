@@ -1,4 +1,5 @@
 from pathlib import Path
+import json
 
 from pydantic import Field, SecretStr
 from pydantic_settings import BaseSettings, SettingsConfigDict
@@ -35,5 +36,21 @@ class Settings(BaseSettings):
         for secret in (self.site_username, self.site_password, self.llm_api_key):
             raw = secret.get_secret_value()
             if raw:
-                value = value.replace(raw, '[REDACTED]')
+                # Also cover string values containing nested JSON tool/observation messages.
+                variants = {raw}
+                for _ in range(3):
+                    variants |= {json.dumps(item, ensure_ascii=ascii_only)[1:-1]
+                                 for item in tuple(variants) for ascii_only in (False, True)}
+                for variant in sorted(variants, key=len, reverse=True):
+                    value = value.replace(variant, '[REDACTED]')
+        return value
+
+    def scrub(self, value):
+        """Redact leaf strings before JSON encoding; preserve structured API types."""
+        if isinstance(value, str):
+            return self.redact(value)
+        if isinstance(value, list):
+            return [self.scrub(item) for item in value]
+        if isinstance(value, dict):
+            return {key: self.scrub(item) for key, item in value.items()}
         return value

@@ -5,15 +5,18 @@ from playwright.async_api import async_playwright
 
 from .config import Settings
 from .contracts import SessionState
+from .browser import BrowserOperations
+from .downloads import DownloadStore
 
 
 class BusyError(Exception):
     pass
 
 
-class BrowserSession:
+class BrowserSession(BrowserOperations):
     def __init__(self, settings: Settings):
         self.settings = settings
+        self.downloads = DownloadStore(settings.download_dir)
         self.page = None
         self.context = None
         self.browser = None

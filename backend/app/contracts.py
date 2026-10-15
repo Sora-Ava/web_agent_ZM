@@ -7,7 +7,7 @@ class LocatorSpec(BaseModel):
     model_config = ConfigDict(extra='forbid')
     kind: Literal['role', 'label', 'text', 'css']
     value: str = Field(min_length=1, max_length=500)
-    role: str | None = None
+    role: str | None = Field(default=None, description='Required when kind=role. Use the observed ARIA role, e.g. button, textbox, link or combobox. Not the element name.')
 
     @model_validator(mode='after')
     def check_role(self):
@@ -20,9 +20,9 @@ class BrowserAction(BaseModel):
     model_config = ConfigDict(extra='forbid')
     kind: Literal['navigate', 'click', 'fill', 'select', 'wait', 'download']
     target: LocatorSpec | None = None
-    value: str | None = Field(default=None, max_length=4000)
-    wait_for_query: bool = False
-    name_parts: list[str] = Field(default_factory=list, max_length=6)
+    value: str | None = Field(default=None, max_length=4000, description='For fill: text to enter. For select: option value. For navigate: URL. Otherwise omit.')
+    wait_for_query: bool = Field(default=False, description='True only when clicking the submit query button to load results. False for navigation into a business/query page and for all fill/select actions.')
+    name_parts: list[str] = Field(default_factory=list, max_length=6, description='Download filename parts such as batch number and material level. Only used for download; otherwise omit.')
 
     @model_validator(mode='after')
     def check_action(self):
