@@ -1,8 +1,11 @@
 """Validated browser operations; no model-supplied JavaScript is evaluated."""
 import asyncio
+import logging
 from urllib.parse import urlsplit, urlunsplit
 
 from .contracts import ActionResult, BrowserAction, PageObservation
+
+logger = logging.getLogger(__name__)
 
 
 OBSERVE = r'''() => {
@@ -100,6 +103,24 @@ class BrowserOperations:
             if action.wait_for_query:
                 if action.kind != 'click':
                     raise ValueError('查询等待只适用于点击')
+                has_signals = (await self.page.locator(self.settings.result_selector).count() == 1
+                               and await self.page.locator(self.settings.loading_selector).count() == 1)
+                if not has_signals:
+                    # Models may label "enter query page" as a query. Accept only
+                    # a new document, not pushState/hash changes or a click alone.
+                    previous_url = self.page.url
+                    document_loaded = asyncio.Event()
+                    def on_document_loaded():
+                        document_loaded.set()
+                    self.page.on('domcontentloaded', on_document_loaded)
+                    try:
+                        await loc.click()
+                        await asyncio.wait_for(document_loaded.wait(), self.settings.action_timeout_ms / 1000)
+                        await self.page.wait_for_url(lambda url: str(url) != previous_url,
+                                                     wait_until='domcontentloaded', timeout=self.settings.action_timeout_ms)
+                    finally:
+                        self.page.remove_listener('domcontentloaded', on_document_loaded)
+                    return ActionResult(status='success', message='页面跳转已完成')
                 await self.page.evaluate('''selectors => {
                     const result=document.querySelector(selectors.result), loading=document.querySelector(selectors.loading);
                     if(!result || !loading)throw Error('missing query selector');
@@ -130,4 +151,6 @@ class BrowserOperations:
             return ActionResult(status='success', message='操作完成')
         except Exception as exc:
             # Do not return Playwright call logs: they may include filled values.
+            reason = self.settings.redact(str(exc).split('Call log:')[0])[:300]
+            logger.warning('Browser action failed (%s): %s', type(exc).__name__, reason)
             return ActionResult(status='failed', message=f'操作失败（{type(exc).__name__}），请检查当前页面或定位/等待配置')

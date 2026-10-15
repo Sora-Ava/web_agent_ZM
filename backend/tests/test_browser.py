@@ -76,3 +76,32 @@ async def test_query_immediate_clear_cannot_finish_before_loading_cycle(session)
     assert result.status == 'success'
     assert time.monotonic() - started >= .8
     assert '最终结果' in (await session.observe()).text
+
+
+async def test_browser_failure_is_logged_without_configured_secret(session, caplog):
+    from pydantic import SecretStr
+    session.settings.site_password = SecretStr('SYNTHETIC_DIAGNOSTIC_SECRET')
+    result = await session.execute(BrowserAction(kind='click', target=LocatorSpec(kind='css', value='[SYNTHETIC_DIAGNOSTIC_SECRET(')))
+    assert result.status == 'failed'
+    assert caplog.records
+    assert 'SYNTHETIC_DIAGNOSTIC_SECRET' not in caplog.text
+
+
+async def test_query_wait_flag_on_entry_button_accepts_verified_navigation(session):
+    result = await session.execute(action('click', '生产查询', wait_for_query=True))
+    assert result.status == 'success'
+    assert session.page.url.endswith('/demo/business')
+
+
+async def test_query_wait_without_signals_or_navigation_does_not_claim_success(session):
+    await session.page.set_content('<button onclick="document.body.dataset.clicked=1">无跳转按钮</button>')
+    session.settings.action_timeout_ms = 300
+    result = await session.execute(action('click', '无跳转按钮', wait_for_query=True))
+    assert result.status == 'failed'
+
+
+async def test_same_document_url_change_does_not_bypass_query_readiness(session):
+    await session.page.set_content('''<button onclick="history.pushState({},'', '?batch=TEST');setTimeout(()=>document.querySelector('#results').textContent='new result',800)">查询</button><div id="results">old result</div>''')
+    session.settings.action_timeout_ms = 300
+    result = await session.execute(action('click', '查询', wait_for_query=True))
+    assert result.status == 'failed'

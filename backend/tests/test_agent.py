@@ -96,3 +96,50 @@ async def test_escaped_credentials_never_enter_actual_model_payload(session):
             observation = json.loads(message['content'].split('：', 1)[1])
             assert secret not in observation['text']
     assert '[REDACTED]' in str(requests[0])
+
+
+@pytest.mark.parametrize('role', [None, ''])
+async def test_missing_role_is_resolved_only_from_unique_observed_element(session, role):
+    responses = [tool('click', {'kind': 'role', 'value': '生产查询', 'role': role}),
+                 {'role': 'assistant', 'content': '已进入查询页'}]
+    def handler(request):
+        return httpx.Response(200, json={'choices': [{'message': responses.pop(0)}]})
+    session.settings.llm_base_url = 'http://model.test/v1'
+    session.settings.llm_model = 'test-model'
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        result = await StepAgent(session.settings, client=client).run('点击生产查询', session)
+    assert result.status == 'success'
+    assert session.page.url.endswith('/demo/business')
+
+
+async def test_missing_role_with_duplicate_observed_names_requires_clarification(session):
+    await enter_business(session)
+    def handler(request):
+        return httpx.Response(200, json={'choices': [{'message': tool('click', {'kind': 'role', 'value': '重复按钮'})}]})
+    session.settings.llm_base_url = 'http://model.test/v1'
+    session.settings.llm_model = 'test-model'
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        result = await StepAgent(session.settings, client=client).run('点击重复按钮', session)
+    assert result.status == 'ambiguous'
+    assert await session.page.locator('#click-count').inner_text() == '0'
+
+
+async def test_completed_fill_is_reported_as_tool_feedback_without_new_user_turn(session):
+    await enter_business(session)
+    requests = []
+    def handler(request):
+        payload = json.loads(request.content)
+        requests.append(payload)
+        last = payload['messages'][-1]
+        if last['role'] == 'tool':
+            feedback = json.loads(last['content'])
+            if feedback.get('executed_action', {}).get('value') == 'TEST001':
+                return httpx.Response(200, json={'choices': [{'message': {'role': 'assistant', 'content': '已填写批次号'}}]})
+        return httpx.Response(200, json={'choices': [{'message': tool('fill', {'kind': 'label', 'value': '生产批次号'}, value='TEST001')}]})
+    session.settings.llm_base_url = 'http://model.test/v1'
+    session.settings.llm_model = 'test-model'
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        result = await StepAgent(session.settings, client=client).run('填写批次号 TEST001', session)
+    assert result.status == 'success'
+    assert len(requests) == 2
+    assert await session.page.locator('#batch').input_value() == 'TEST001'

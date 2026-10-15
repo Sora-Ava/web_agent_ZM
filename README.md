@@ -60,6 +60,15 @@ LLM_MODEL=your-tool-capable-model
 
 客户端向 `LLM_BASE_URL + /chat/completions` 发请求。不要把完整 `/chat/completions` 路径写进 base URL。服务及模型必须支持 `tools`、`tool_calls`、工具结果消息及 JSON Schema（包括 `$defs` 引用）；无法使用工具时会明确报错。
 
+可先独立检查模型配置，不启动浏览器：
+
+```powershell
+.\.venv\Scripts\python.exe scripts/check_llm.py
+.\.venv\Scripts\python.exe scripts/check_llm.py --tools
+```
+
+脚本只读取项目 `.env` 的 LLM 配置，分别检查文本响应与最小工具协议，不输出 API 密钥。
+
 模型每条指令最多 8 轮，默认每次请求超时 60 秒，不自动重试 API 请求。动作失败直接反馈，首版不会自动恢复。模型产生的总结仅作为解释，程序记录的操作/下载结果才是成功证据。
 
 ## 接入真实系统
@@ -87,7 +96,7 @@ LLM_MODEL=your-tool-capable-model
 
 - 当前启动期间的指令/文件登记在内存，刷新页面可重新查看；重启后不保留历史索引，磁盘文件仍保留。
 - 同名导出加唯一标识，不覆盖文件。首版仅检查文件非空，不验证 Excel/CSV 业务内容。
-- 未实际连接用户内部站点和真实模型，真实环境验收仍待完成。
+- 已使用真实模型在内置演示系统验证完整查询导出及无数据不导出；尚未接入用户的真实内部管理系统。
 
 ## 开发与测试
 
