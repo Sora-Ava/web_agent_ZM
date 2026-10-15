@@ -32,12 +32,14 @@ class EventBus:
 
 
 class CommandRunner:
-    def __init__(self, session, bus):
+    def __init__(self, session, bus, repository=None):
         self.session = session
         self.bus = bus
         self.agent = StepAgent(session.settings)
         self.commands = deque(maxlen=100)
         self.task = None
+        self.repository = repository
+        self.workflows = None
 
     async def submit(self, instruction):
         lease = self.session.reserve()
@@ -49,10 +51,20 @@ class CommandRunner:
 
     async def _run(self, command, instruction, lease):
         from .contracts import ActionResult
+        async def emit(event):
+            if self.repository and event.get('record_action') and event.get('result', {}).get('status') == 'success':
+                from .contracts import BrowserAction
+                try:
+                    self.repository.record(BrowserAction.model_validate(event['record_action']), command['id'], command['instruction'], event['url_before'])
+                except ValueError:
+                    self.repository.warn('部分成功操作未能安全记录，请检查草稿完整性')
+            await self.bus.publish({key: value for key, value in event.items() if key not in ('record_action', 'url_before')})
         try:
             await self.bus.publish({'type': 'command_started', 'command': dict(command)})
-            result = await self.agent.run(instruction, self.session, emit=self.bus.publish)
+            result = await self.agent.run(instruction, self.session, emit=emit)
             command.update(status='finished', result=result.model_dump())
+            if self.repository and result.status != 'success':
+                self.repository.warn('存在未完成指令：仅保留已成功动作，请检查后确认保存')
             if result.status == 'ambiguous':
                 await self.bus.publish({'type': 'needs_clarification', 'message': result.message})
         except asyncio.CancelledError:
@@ -65,5 +77,9 @@ class CommandRunner:
             await self.bus.publish({'type': 'command_finished', 'command': dict(command)})
 
     def snapshot(self):
+        draft = self.repository.draft() if self.repository else None
         return {'session': self.session.state().model_dump(), 'commands': list(self.commands),
+                'workflows': self.repository.list() if self.repository else [],
+                'recording': {'revision': draft['revision'], 'step_count': len(draft['steps']), 'warnings': draft['warnings']} if draft else None,
+                'run': self.workflows.current if self.workflows else None,
                 'files': self.session.downloads.list(), 'events': list(self.bus.history)}

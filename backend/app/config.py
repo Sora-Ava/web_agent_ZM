@@ -24,6 +24,7 @@ class Settings(BaseSettings):
     llm_api_key: SecretStr = SecretStr('')
     llm_model: str = ''
     download_dir: Path = ROOT / 'downloads'
+    database_path: Path = ROOT / 'data' / 'agent.sqlite3'
     headless: bool = True
     action_timeout_ms: int = Field(default=30000, ge=100, le=120000)
     download_timeout_ms: int = Field(default=60000, ge=100, le=300000)

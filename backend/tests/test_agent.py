@@ -4,7 +4,7 @@ import httpx
 import pytest
 
 from app.agent import StepAgent
-from app.contracts import ActionResult
+from app.contracts import ActionResult, BrowserAction
 from test_browser import enter_business
 
 
@@ -143,3 +143,29 @@ async def test_completed_fill_is_reported_as_tool_feedback_without_new_user_turn
     assert result.status == 'success'
     assert len(requests) == 2
     assert await session.page.locator('#batch').input_value() == 'TEST001'
+
+
+async def test_recording_preserves_business_query_and_hash_without_sending_url_to_model(session):
+    await session.page.evaluate("history.replaceState({}, '', '/demo/home?view=production&token=synthetic-token#/batches')")
+    events, requests = [], []
+    responses = [tool('wait', {'kind': 'role', 'role': 'button', 'value': '生产查询'}),
+                 {'role': 'assistant', 'content': '已等待'}]
+    def handler(request):
+        requests.append(json.loads(request.content))
+        return httpx.Response(200, json={'choices': [{'message': responses.pop(0)}]})
+    async def emit(event):
+        events.append(event)
+    session.settings.llm_base_url = 'http://model.test/v1'
+    session.settings.llm_model = 'test-model'
+    async with httpx.AsyncClient(transport=httpx.MockTransport(handler)) as client:
+        result = await StepAgent(session.settings, client=client).run('等待生产查询按钮', session, emit)
+    assert result.status == 'success'
+    step = next(event for event in events if event['type'] == 'step_result')
+    from app.workflows.repository import WorkflowRepository
+    from app.workflows.models import site_key
+    repository = WorkflowRepository(session.settings.database_path, site_key(session.settings.site_url))
+    repository.record(BrowserAction.model_validate(step['record_action']), 'command', '等待', step['url_before'])
+    entry = repository.proposal()['definition']['entry_url']
+    assert entry.endswith('/demo/home?view=production#/batches')
+    assert 'synthetic-token' not in entry
+    assert 'synthetic-token' not in json.dumps(requests)
