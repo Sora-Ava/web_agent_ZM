@@ -8,3 +8,4 @@ downloads/
 .superpowers/
 *.egg-info/
 test-results/
+*.tsbuildinfo
