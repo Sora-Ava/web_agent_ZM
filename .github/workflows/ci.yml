@@ -1,4 +1,4 @@
-name: Phase 1 checks
+name: Windows checks
 on: [push, pull_request]
 jobs:
   windows:
@@ -23,4 +23,4 @@ jobs:
         if: always()
         with:
           name: workbench-screenshot
-          path: test-results/workbench.png
+          path: test-results/*.png

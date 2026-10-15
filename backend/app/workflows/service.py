@@ -1,47 +1,39 @@
 import asyncio
-from uuid import uuid4
 
-from .executor import RunResult, WorkflowExecutor
-from .models import WorkflowDefinition, site_key, validate_parameters
+from ..sessions import BusyError
+from .models import WorkflowDefinition, validate_parameters
 
 
 class WorkflowRunService:
-    def __init__(self, session, repository, bus, command_runner):
-        self.session = session
-        self.repository = repository
-        self.bus = bus
-        self.command_runner = command_runner
-        self.current = None
-        self.task = None
+    """Compatibility view: single runs now use the persistent task queue."""
+
+    def __init__(self, tasks):
+        self.tasks = tasks
+        self.identity = None
+
+    @property
+    def task(self):
+        return self.tasks.dispatcher
+
+    @property
+    def current(self):
+        if not self.identity:
+            return None
+        task = self.tasks.repository.get(self.identity)
+        row = task['rows'][0]
+        status = row['status'] if task['status'] == 'completed' else task['status']
+        return {'id': task['id'], 'flow_id': task['flow_id'], 'name': task['name'], 'version': task['version'],
+                'parameters': row['parameters'], 'status': status, 'steps': row['steps'], 'result': row['result'], 'model_calls': 0}
 
     async def submit(self, flow_id, version, parameters):
-        record = self.repository.get(flow_id, version)
+        if self.tasks.session.busy:
+            raise BusyError('浏览器正在执行操作')
+        record = self.tasks.repository.workflows.get(flow_id, version)
         definition = WorkflowDefinition.model_validate(record['definition'])
-        values = validate_parameters(definition, parameters)
-        if definition.site_key != site_key(self.session.settings.site_url):
+        validate_parameters(definition, parameters)
+        if definition.site_key != self.tasks.repository.workflows.scope:
             raise ValueError('当前网站与流程所属系统不一致')
-        lease = self.session.reserve()
-        await lease.__aenter__()
-        self.command_runner.agent.history = []
-        self.current = {'id': uuid4().hex, 'flow_id': flow_id, 'name': definition.name, 'version': record['version'],
-                        'parameters': values, 'status': 'running', 'steps': [], 'result': None, 'model_calls': 0}
-        self.task = asyncio.create_task(self._run(definition, values, lease, self.current))
-        return self.current['id']
-
-    async def _run(self, definition, values, lease, run):
-        async def emit(event):
-            run['steps'].append({key: value for key, value in event.items() if key != 'type'})
-            await self.bus.publish(event)
-        try:
-            await self.bus.publish({'type': 'workflow_started', 'run_id': run['id']})
-            result = await WorkflowExecutor(self.session).execute(definition, values, emit)
-            run.update(status=result.status, result=result.model_dump())
-        except asyncio.CancelledError:
-            run.update(status='interrupted')
-            raise
-        except Exception:
-            result = RunResult(status='failed', message='标准流程执行异常')
-            run.update(status='failed', result=result.model_dump())
-        finally:
-            await lease.__aexit__(None, None, None)
-            await self.bus.publish({'type': 'workflow_finished', 'run_id': run['id']})
+        self.identity = await self.tasks.submit(flow_id, version, [parameters])
+        await self.tasks.release_authoring()
+        await asyncio.sleep(0)
+        return self.identity

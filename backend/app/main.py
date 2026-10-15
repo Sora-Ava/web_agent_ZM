@@ -15,6 +15,9 @@ from .workflows.models import site_key
 from .workflows.repository import WorkflowRepository
 from .workflows.routes import router as workflow_router
 from .workflows.service import WorkflowRunService
+from .tasks.repository import TaskRepository
+from .tasks.service import TaskService
+from .tasks.routes import router as tasks_router
 
 
 def create_app(settings=None, session=None):
@@ -23,14 +26,16 @@ def create_app(settings=None, session=None):
 
     @asynccontextmanager
     async def lifespan(app):
+        app.state.tasks.repository.interrupt_unfinished()
         capture = asyncio.create_task(capture_screen(app))
         try:
             yield
         finally:
+            await app.state.tasks.shutdown()
             capture.cancel()
             with suppress(asyncio.CancelledError):
                 await capture
-            for task in (app.state.runner.task, app.state.workflows.task):
+            for task in (app.state.runner.task,):
                 if task and not task.done():
                     task.cancel()
                     with suppress(asyncio.CancelledError):
@@ -44,7 +49,10 @@ def create_app(settings=None, session=None):
     app.state.repository = WorkflowRepository(settings.database_path, site_key(settings.site_url),
         secrets=[settings.site_password.get_secret_value(), settings.llm_api_key.get_secret_value()])
     app.state.runner = CommandRunner(session, app.state.bus, app.state.repository)
-    app.state.workflows = WorkflowRunService(session, app.state.repository, app.state.bus, app.state.runner)
+    app.state.tasks = TaskService(session, TaskRepository(app.state.repository), app.state.bus, app.state.runner)
+    session.downloads.bind_repository(app.state.tasks.repository)
+    app.state.runner.tasks = app.state.tasks
+    app.state.workflows = WorkflowRunService(app.state.tasks)
     app.state.runner.workflows = app.state.workflows
     app.state.latest_frame = None
     app.state.screen_clients = 0
@@ -61,6 +69,7 @@ def create_app(settings=None, session=None):
 
     app.include_router(router)
     app.include_router(workflow_router)
+    app.include_router(tasks_router)
     app.include_router(demo_app.router)
     dist = ROOT / 'frontend' / 'dist'
     if dist.is_dir():

@@ -23,7 +23,7 @@ class CommandInput(BaseModel):
 
 @router.get('/health')
 async def health():
-    return {'ok': True, 'phase': 2}
+    return {'ok': True, 'phase': 3}
 
 
 @router.get('/session')
@@ -36,6 +36,7 @@ async def start(request: Request):
     session = request.app.state.session
     try:
         async with session.reserve():
+            request.app.state.tasks.authoring = True
             await session.start()
             login = await session.login()
             if login.status != 'success':

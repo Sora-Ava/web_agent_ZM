@@ -40,10 +40,13 @@ class CommandRunner:
         self.task = None
         self.repository = repository
         self.workflows = None
+        self.tasks = None
 
     async def submit(self, instruction):
         lease = self.session.reserve()
         await lease.__aenter__()
+        if self.tasks:
+            self.tasks.authoring = True
         command = {'id': uuid4().hex, 'instruction': self.session.settings.redact(instruction), 'status': 'running', 'result': None}
         self.commands.append(command)
         self.task = asyncio.create_task(self._run(command, instruction, lease))
@@ -82,4 +85,6 @@ class CommandRunner:
                 'workflows': self.repository.list() if self.repository else [],
                 'recording': {'revision': draft['revision'], 'step_count': len(draft['steps']), 'warnings': draft['warnings']} if draft else None,
                 'run': self.workflows.current if self.workflows else None,
+                'tasks': self.tasks.repository.list() if self.tasks else [],
+                'queue': {'authoring': self.tasks.authoring, 'active_id': self.tasks.active_id} if self.tasks else None,
                 'files': self.session.downloads.list(), 'events': list(self.bus.history)}
