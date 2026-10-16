@@ -113,17 +113,18 @@ export default function App(){
    <div className="sidebar-section sidebar-workflows"><div className="flow-list-heading"><span>标准流程</span><button className="icon-button" disabled={busy} onClick={()=>void newRecording()} aria-label="新建流程" title="新建流程并开始录制"><Plus size={17}/></button></div>
     <div className="flow-list">{(snapshot.workflows||[]).map(flow=><button key={flow.id} className={'flow-item '+(selected?.id===flow.id?'selected':'')} onClick={()=>void chooseFlow(flow.id)} aria-label={'流程：'+flow.name}><Workflow size={15}/><span>{flow.name}</span><small>v{flow.version}</small></button>)}{!snapshot.workflows?.length&&<p className="sidebar-empty">成功操作后保存流程，<br/>下次只需填写参数。</p>}</div>
    </div>
-   <div className="phase-card"><div><Layers3 size={16}/><strong>阶段 03</strong><span className="phase-dot"/></div><p>让流程逐行执行</p><small>参数表格 → 队列 → 结果</small></div>
-   <div className="future-note"><Workflow size={18}/><strong>标准回放，减少等待</strong><p>批量任务串行执行，<br/>自动恢复将在后续加入。</p></div>
+   <div className="phase-card"><div><Layers3 size={16}/><strong>阶段 04</strong><span className="phase-dot"/></div><p>异常时，有限恢复</p><small>证据检查 → 修复 → 审核</small></div>
+   <div className="future-note"><Workflow size={18}/><strong>标准回放，减少等待</strong><p>正常执行零模型，<br/>修复确认后另存版本。</p></div>
    <a className="repo-link" href="https://github.com/Sora-Ava/web_agent_ZM" target="_blank" rel="noreferrer">项目仓库<ExternalLink size={13}/></a>
-   <div className="local-status"><span className={connected?'dot':'dot offline'}/>{connected?'本地服务已连接':'正在连接本地服务'}<span>v0.3</span></div>
+   <div className="local-status"><span className={connected?'dot':'dot offline'}/>{connected?'本地服务已连接':'正在连接本地服务'}<span>v0.4</span></div>
   </aside>
   <main><header className="topbar"><div><span className="breadcrumb">工作空间 / </span>{history?'任务历史':selected?'标准流程':'操作工作台'}</div><div className="local-badge"><Globe2 size={13}/>Windows · 本机运行</div></header>
    <div className="page-content"><div className="page-heading"><div><div className="page-kicker">BROWSER AUTOMATION</div><h1>{history?'每一行，都有结果':selected?'让成功的流程，再跑一次':'把下一步，交给 Agent'}<span>✦</span></h1><p>{history?'查看任务进度、参数快照和关联文件。':selected?'填写本次查询参数，程序按已确认流程直接执行。':'用自然语言逐步操作，成功后保存为标准流程。'}</p></div>
     <div className="session-actions"><span className={'session-status '+(active?'online':'')}><CircleDot size={13}/>{pending?'处理中':statusNames[status]||status}</span>{active?<button className="secondary" disabled={busy} onClick={()=>void lifecycle(false)}><Power size={15}/>关闭浏览器</button>:<button className="primary" disabled={busy||!connected} onClick={()=>void lifecycle(true)}>{pending?<LoaderCircle size={16} className="spin"/>:<Play size={15}/>}启动并登录</button>}</div>
    </div>
    {error&&<div className="error-banner" role="alert">{error}<button onClick={()=>setError('')} aria-label="关闭错误">×</button></div>}
-   <div className="info-strip"><span className="info-number">03</span><div><strong>{history?'任务历史与关联文件保存在本地':selected?'标准流程回放不调用 LLM':'成功动作自动记录，保存前由你确认'}</strong><span>{history?'每行独立记录；完成任务仍需查看各行结果。':selected?'登录状态、元素定位和下载结果仍由程序检查。':`当前草稿已记录 ${recordingCount} 步。输入信息将作为参数建议展示。`}</span></div></div>
+   <div className="info-strip"><span className="info-number">04</span><div><strong>{history?'任务历史与关联文件保存在本地':selected?'正常执行不调用 LLM，异常时有限恢复':'成功动作自动记录，保存前由你确认'}</strong><span>{history?'每行独立记录；完成任务仍需查看各行结果。':selected?'登录状态、元素定位和下载结果仍由程序检查。':`当前草稿已记录 ${recordingCount} 步。输入信息将作为参数建议展示。`}</span></div></div>
+   {snapshot.queue?.fault&&<div className="queue-banner queue-fault"><div><strong>队列因全局故障暂停派发</strong><span>{snapshot.queue.fault}</span></div><button className="secondary" disabled={busy} onClick={()=>void releaseQueue()}>重新启动队列</button></div>}
    {snapshot.queue?.authoring&&<div className="queue-banner"><div><strong>浏览器由编排会话占用</strong><span>队列等待中；结束编排后按顺序执行。</span></div><button className="secondary" disabled={busy} onClick={()=>void releaseQueue()}>结束编排并启动队列</button></div>}
    {selected&&!history&&<div className="run-mode-tabs"><button className={!batchMode?'selected':''} onClick={()=>setBatchMode(false)}>单次运行</button><button className={batchMode?'selected':''} onClick={()=>setBatchMode(true)}>批量运行</button></div>}
    {!selected&&!history&&<div className="recording-toolbar"><span>{snapshot.recording?.warnings.length?'草稿包含未完成指令，请保存前检查。':`已记录 ${recordingCount} 个成功操作`}</span><div><button className="secondary" disabled={busy} onClick={()=>void newRecording()}><Plus size={14}/>新建录制</button><button className="primary" disabled={busy||!recordingCount} onClick={()=>void prepareSave()}><Save size={14}/>保存为标准流程</button></div></div>}
@@ -131,7 +132,7 @@ export default function App(){
     {history?<TaskPanel key={taskId||'history'} task={taskRecord} tasks={snapshot.tasks||[]} onChoose={id=>openHistory(id)} onControl={controlTask}/>:selected&&batchMode?<BatchPanel record={selected} onSubmit={submitBatch}/>:selected?<WorkflowRunPanel record={selected} run={snapshot.run||null} busy={busy} onRun={run} onVersion={version=>void chooseFlow(selected.id,version)} onEdit={()=>setEditor({record:selected,proposal:{definition:selected.definition,warnings:[],suggestion_source:'recording',model_calls:0}})}/>:<CommandPanel commands={snapshot.commands} busy={busy} ready={status==='ready'} onSend={send}/>}
     <div className="right-column"><BrowserView url={snapshot.session.current_url} active={active}/><FileList files={snapshot.files}/></div>
    </div>
-   <footer className="page-footer"><span><Terminal size={13}/>结构化工具执行 · Playwright</span><span>{metrics.length?`编排累计 ${metrics.reduce((sum,e)=>sum+(e.model_calls||0),0)} 次模型请求`:'标准回放无需模型请求'}</span></footer>
+   <footer className="page-footer"><span><Terminal size={13}/>结构化工具执行 · Playwright</span><span>{metrics.length?`编排累计 ${metrics.reduce((sum,e)=>sum+(e.model_calls||0),0)} 次模型请求`:'正常执行无需模型请求'}</span></footer>
   </div></main>
   {editor&&<WorkflowEditor proposal={editor.proposal} editing={!!editor.record} onSave={save} onClose={()=>setEditor(null)}/>}
  </div>;

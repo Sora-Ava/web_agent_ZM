@@ -1,6 +1,7 @@
 """Validated browser operations; no model-supplied JavaScript is evaluated."""
 import asyncio
 import logging
+from uuid import uuid4
 from urllib.parse import urlsplit, urlunsplit
 
 from .contracts import ActionResult, BrowserAction, PageObservation
@@ -75,6 +76,7 @@ class BrowserOperations:
         return PageObservation(url=urlunsplit((parsed.scheme, parsed.netloc, parsed.path, '', '')), **safe)
 
     async def execute(self, action: BrowserAction) -> ActionResult:
+        effect_started = False
         try:
             self.require_page()
             if action.kind == 'navigate':
@@ -96,6 +98,7 @@ class BrowserOperations:
                 raise ValueError('敏感字段只能通过登录程序操作')
             if action.kind == 'download':
                 async with self.page.expect_download(timeout=self.settings.download_timeout_ms) as pending:
+                    effect_started = True
                     await loc.click()
                 download = await pending.value
                 identity = await asyncio.wait_for(self.downloads.save(download, action.name_parts), self.settings.download_timeout_ms / 1000)
@@ -125,7 +128,7 @@ class BrowserOperations:
                     const result=document.querySelector(selectors.result), loading=document.querySelector(selectors.loading);
                     if(!result || !loading)throw Error('missing query selector');
                     window.__queryObserver?.disconnect();
-                    const state=window.__queryState={seen:false,finished:false,changed:false};
+                    const state=window.__queryState={seen:false,finished:false,changed:false,attempt:selectors.attempt};
                     function check(records){
                         if(records.some(r=>r.type!=='attributes'&&(r.target===result||result.contains(r.target))))state.changed=true;
                         const active=loading.getClientRects().length>0&&getComputedStyle(loading).visibility!=='hidden';
@@ -134,7 +137,7 @@ class BrowserOperations:
                     }
                     window.__queryObserver=new MutationObserver(check);
                     window.__queryObserver.observe(document.body,{childList:true,subtree:true,characterData:true,attributes:true});
-                }''', {'result': self.settings.result_selector, 'loading': self.settings.loading_selector})
+                }''', {'result': self.settings.result_selector, 'loading': self.settings.loading_selector, 'attempt': uuid4().hex})
             if action.kind == 'click':
                 await loc.click()
             elif action.kind == 'fill':
@@ -153,4 +156,4 @@ class BrowserOperations:
             # Do not return Playwright call logs: they may include filled values.
             reason = self.settings.redact(str(exc).split('Call log:')[0])[:300]
             logger.warning('Browser action failed (%s): %s', type(exc).__name__, reason)
-            return ActionResult(status='failed', message=f'操作失败（{type(exc).__name__}），请检查当前页面或定位/等待配置')
+            return ActionResult(status='failed', message=f'操作失败（{type(exc).__name__}），请检查当前页面或定位/等待配置', effect_started=effect_started)

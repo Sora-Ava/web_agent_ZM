@@ -37,6 +37,7 @@ class ActionResult(BaseModel):
     status: Literal['success', 'failed', 'ambiguous']
     message: str
     file_id: str | None = None
+    effect_started: bool = False
 
 
 class PageObservation(BaseModel):

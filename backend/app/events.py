@@ -86,5 +86,5 @@ class CommandRunner:
                 'recording': {'revision': draft['revision'], 'step_count': len(draft['steps']), 'warnings': draft['warnings']} if draft else None,
                 'run': self.workflows.current if self.workflows else None,
                 'tasks': self.tasks.repository.list() if self.tasks else [],
-                'queue': {'authoring': self.tasks.authoring, 'active_id': self.tasks.active_id} if self.tasks else None,
+                'queue': {'authoring': self.tasks.authoring, 'active_id': self.tasks.active_id, 'fault': self.tasks.fault} if self.tasks else None,
                 'files': self.session.downloads.list(), 'events': list(self.bus.history)}

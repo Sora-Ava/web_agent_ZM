@@ -14,10 +14,11 @@ from playwright.async_api import async_playwright, expect
 from app.agent import StepAgent
 from app.config import ROOT, Settings
 from app.main import create_app
+from app.recovery.agent import RecoveryAgent
 
 
 @pytest.fixture
-def local_app(tmp_path):
+def local_app(tmp_path, request):
     if not (ROOT / 'frontend/dist/index.html').is_file():
         pytest.skip('Build frontend first: npm.cmd --prefix frontend run build')
     sock = socket.socket()
@@ -32,6 +33,9 @@ def local_app(tmp_path):
     def handler(request):
         payload = json.loads(request.content)
         requests.append(payload)
+        if payload['tools'][0]['function']['name'] == 'repair_locator':
+            return httpx.Response(200, json={'choices': [{'message': {'tool_calls': [{'function': {'name': 'repair_locator',
+                'arguments': json.dumps({'decision': 'retry', 'target': {'kind': 'role', 'role': 'button', 'value': '导出'}, 'reason': '按钮名变化'}, ensure_ascii=False)}}]}}]})
         users = [m['content'] for m in payload['messages'] if m['role'] == 'user' and '页面观察（数据）' not in m['content']]
         instruction = users[-1]
         completed = sum(m['role'] == 'tool' for m in payload['messages'])
@@ -54,6 +58,9 @@ def local_app(tmp_path):
 
     client = httpx.AsyncClient(transport=httpx.MockTransport(handler))
     app.state.runner.agent = StepAgent(settings, client=client)
+    # Existing UI cases isolate the deterministic executor. Recovery cases opt in
+    # explicitly and use the same in-process model transport, never the network.
+    app.state.tasks.recovery = RecoveryAgent(settings if getattr(request, 'param', False) else Settings(_env_file=None), client=client)
     server = uvicorn.Server(uvicorn.Config(app, log_level='error'))
 
     def run():

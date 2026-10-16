@@ -5,6 +5,8 @@ from ..workflows.executor import WorkflowExecutor
 from ..workflows.models import WorkflowDefinition
 from .control import TaskStopped
 from .repository import TERMINAL
+from ..recovery.agent import RecoveryAgent
+from ..recovery.repository import RepairRepository
 
 
 class TaskService:
@@ -18,6 +20,9 @@ class TaskService:
         self.dispatcher = None
         self.changed = asyncio.Event()
         self.closing = False
+        self.recovery = RecoveryAgent(session.settings)
+        self.repairs = RepairRepository(repository)
+        self.fault = None
 
     async def publish(self):
         await self.bus.publish({'type': 'tasks_changed'})
@@ -38,6 +43,7 @@ class TaskService:
         if self.session.busy:
             raise BusyError('请等待当前浏览器操作完成')
         self.authoring = False
+        self.fault = None
         self.command_runner.agent.history = []
         self.wake()
         await self.publish()
@@ -90,7 +96,7 @@ class TaskService:
             identity = self.repository.next_queued()
             if not identity:
                 return
-            if self.authoring or self.session.busy:
+            if self.authoring or self.session.busy or self.fault:
                 self.changed.clear()
                 try:
                     await asyncio.wait_for(self.changed.wait(), .2)
@@ -119,6 +125,7 @@ class TaskService:
     async def _run(self, identity):
         task = self.repository.get(identity)
         definition = WorkflowDefinition.model_validate(task['definition'])
+        overrides = {}
         await self.publish()
         for row in task['rows']:
             index = row['row_index']
@@ -132,7 +139,12 @@ class TaskService:
             self.session.downloads.task_context = (identity, index)
 
             async def emit(event):
+                if event['type'] == 'repair_suggested':
+                    self.repairs.record(identity, index, self.session.settings.scrub({k: v for k, v in event.items() if k != 'type'}))
+                    await self.publish()
+                    return
                 record = {key: value for key, value in event.items() if key != 'type'}
+                record['kind'] = event['type']
                 record = self.session.settings.scrub(record)
                 self.repository.add_step(identity, index, record)
                 await self.publish()
@@ -140,10 +152,15 @@ class TaskService:
             async def checkpoint():
                 await self._checkpoint(identity)
 
-            result = await WorkflowExecutor(self.session).execute(definition, row['parameters'], emit, checkpoint)
+            result = await WorkflowExecutor(self.session, recovery=self.recovery).execute(definition, row['parameters'], emit, checkpoint, overrides)
             self.session.downloads.task_context = (None, None)
             self.repository.update_row(identity, index, status=result.status, result=self.session.settings.scrub(result.model_dump()))
             await self.publish()
+            if result.fatal:
+                self.fault = result.message
+                self.repository.update_task(identity, 'failed')
+                self.repository.finish_remaining(identity, 'skipped')
+                return
             if result.status == 'stopped':
                 self.repository.update_task(identity, 'stopped')
                 self.repository.finish_remaining(identity, 'skipped')
