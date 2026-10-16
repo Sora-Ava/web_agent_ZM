@@ -28,7 +28,10 @@ class DownloadStore:
 
     def bind_repository(self, repository):
         self.repository = repository
+        self.files.clear()
         for metadata in repository.files():
+            if metadata.get('deleted'):
+                continue
             path = Path(metadata['path']).resolve()
             # Only the configured export directory is exposed by file endpoints.
             if path.parent == self.directory:
@@ -64,3 +67,33 @@ class DownloadStore:
 
     def get(self, identity: str):
         return self.files.get(identity)
+
+    def delete(self, identity):
+        entry = self.get(identity)
+        if not entry:
+            raise KeyError(identity)
+        def move(metadata):
+            path = Path(metadata['path'])
+            if path.is_symlink() or path.resolve().parent != self.directory:
+                raise ValueError('仅能回收导出目录内已登记文件')
+            trash = self.directory / '.trash'
+            if trash.is_symlink() or trash.resolve().parent != self.directory:
+                raise ValueError('回收目录不安全，请检查路径')
+            trash.mkdir(exist_ok=True)
+            destination = trash / path.name
+            if destination.exists() or destination.is_symlink():
+                raise ValueError('回收目录已有同名文件，未覆盖')
+            if not path.exists():
+                return None, None
+            if not path.is_file():
+                raise ValueError('登记路径不是文件')
+            path.replace(destination)
+            def undo():
+                if destination.is_file() and not path.exists():
+                    destination.replace(path)
+            return str(destination), undo
+        if self.repository:
+            self.repository.recycle_file(identity, move)
+        else:
+            move({'path': str(entry.path)})
+        del self.files[identity]

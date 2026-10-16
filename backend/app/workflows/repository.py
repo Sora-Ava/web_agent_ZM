@@ -29,6 +29,8 @@ class WorkflowRepository:
             ''')
             if not db.execute('SELECT id FROM drafts WHERE site_key=? AND active=1', (scope,)).fetchone():
                 db.execute('INSERT INTO drafts(id,site_key,active) VALUES(?,?,1)', (uuid4().hex, scope))
+            if 'deleted_at' not in {r[1] for r in db.execute('PRAGMA table_info(workflows)')}:
+                db.execute('ALTER TABLE workflows ADD COLUMN deleted_at TEXT')
 
     @contextmanager
     def connection(self):
@@ -122,7 +124,7 @@ class WorkflowRepository:
                 draft = db.execute('SELECT id,revision FROM drafts WHERE site_key=? AND active=1', (self.scope,)).fetchone()
                 if source_revision != f'{draft["id"]}:{draft["revision"]}':
                     raise VersionConflict('录制草稿已变化，请重新生成并检查')
-            db.execute('INSERT INTO workflows VALUES(?,?,?)', (identity, self.scope, now))
+            db.execute('INSERT INTO workflows(id,site_key,created_at) VALUES(?,?,?)', (identity, self.scope, now))
             db.execute('INSERT INTO workflow_versions VALUES(?,?,?,?)', (identity, 1, definition.model_dump_json(), now))
         return self.get(identity)
 
@@ -130,7 +132,7 @@ class WorkflowRepository:
         definition = self._validated(definition, confirmed)
         with self.connection() as db:
             db.execute('BEGIN IMMEDIATE')
-            row = db.execute('SELECT w.site_key,MAX(v.version) AS version FROM workflows w JOIN workflow_versions v ON w.id=v.flow_id WHERE w.id=? GROUP BY w.id', (flow_id,)).fetchone()
+            row = db.execute('SELECT w.site_key,MAX(v.version) AS version FROM workflows w JOIN workflow_versions v ON w.id=v.flow_id WHERE w.id=? AND w.deleted_at IS NULL GROUP BY w.id', (flow_id,)).fetchone()
             if not row:
                 raise KeyError(flow_id)
             if row['site_key'] != definition.site_key:
@@ -142,6 +144,8 @@ class WorkflowRepository:
 
     def get(self, flow_id, version=None):
         with self.connection() as db:
+            if not db.execute('SELECT id FROM workflows WHERE id=? AND deleted_at IS NULL', (flow_id,)).fetchone():
+                raise KeyError(flow_id)
             if version is None:
                 row = db.execute('SELECT * FROM workflow_versions WHERE flow_id=? ORDER BY version DESC LIMIT 1', (flow_id,)).fetchone()
             else:
@@ -153,6 +157,21 @@ class WorkflowRepository:
 
     def list(self):
         with self.connection() as db:
-            ids = [r[0] for r in db.execute('SELECT id FROM workflows ORDER BY created_at DESC')]
+            ids = [r[0] for r in db.execute('SELECT id FROM workflows WHERE deleted_at IS NULL ORDER BY created_at DESC')]
         return [{'id': record['id'], 'version': record['version'], 'name': record['definition']['name'],
                  'site_key': record['definition']['site_key']} for record in (self.get(identity) for identity in ids)]
+
+    def delete(self, identity, expected_version):
+        from ..sessions import BusyError
+        with self.connection() as db:
+            db.execute('BEGIN IMMEDIATE')
+            row = db.execute('SELECT id FROM workflows WHERE id=? AND deleted_at IS NULL', (identity,)).fetchone()
+            if not row:
+                raise KeyError(identity)
+            latest = db.execute('SELECT MAX(version) FROM workflow_versions WHERE flow_id=?', (identity,)).fetchone()[0]
+            if latest != expected_version:
+                raise VersionConflict('流程已有更新，请重新打开后确认删除全部版本')
+            if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='tasks'").fetchone():
+                if db.execute("SELECT 1 FROM tasks WHERE flow_id=? AND status NOT IN ('completed','failed','stopped','interrupted') LIMIT 1", (identity,)).fetchone():
+                    raise BusyError('流程仍有未结束任务，请先停止任务')
+            db.execute('UPDATE workflows SET deleted_at=? WHERE id=?', (datetime.now(timezone.utc).isoformat(), identity))

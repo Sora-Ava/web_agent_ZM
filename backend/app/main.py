@@ -18,6 +18,7 @@ from .workflows.service import WorkflowRunService
 from .tasks.repository import TaskRepository
 from .tasks.service import TaskService
 from .tasks.routes import router as tasks_router
+from .diagnostics import router as diagnostics_router
 
 
 def create_app(settings=None, session=None):
@@ -70,6 +71,7 @@ def create_app(settings=None, session=None):
     app.include_router(router)
     app.include_router(workflow_router)
     app.include_router(tasks_router)
+    app.include_router(diagnostics_router)
     app.include_router(demo_app.router)
     dist = ROOT / 'frontend' / 'dist'
     if dist.is_dir():

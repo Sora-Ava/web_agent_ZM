@@ -24,6 +24,7 @@ class RepairRepository:
 
     def record(self, identity, index, detail):
         task = self.tasks.get(identity)
+        self.tasks.workflows.get(task['flow_id'])
         step = next((s for s in task['definition']['steps'] if s['id'] == detail['step_id']), None)
         replacement = LocatorSpec.model_validate(detail['replacement'])
         if not step or not step['action'] or step['action']['target'] != detail['original'] or replacement.kind == 'css':
@@ -38,6 +39,7 @@ class RepairRepository:
         if confirmed is not True or not ids or len(ids) != len(set(ids)):
             raise ValueError('请选择修复并明确确认保存')
         task = self.tasks.get(identity)
+        self.tasks.workflows.get(task['flow_id'])
         if task['status'] not in TERMINAL:
             raise VersionConflict('请等待任务结束后审核修复')
         selected = [r for r in self.list(identity) if r['id'] in ids]
@@ -52,6 +54,8 @@ class RepairRepository:
         definition = self.tasks.workflows._validated(definition, True)
         with self.connection() as db:
             db.execute('BEGIN IMMEDIATE')
+            if not db.execute('SELECT id FROM workflows WHERE id=? AND deleted_at IS NULL', (task['flow_id'],)).fetchone():
+                raise KeyError(task['flow_id'])
             latest = db.execute('SELECT MAX(version) FROM workflow_versions WHERE flow_id=?', (task['flow_id'],)).fetchone()[0]
             if latest != expected_version or latest != task['version']:
                 raise VersionConflict('流程已有新版本，不能覆盖；请检查最新版本后手动编辑')
