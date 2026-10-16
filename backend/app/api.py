@@ -23,7 +23,7 @@ class CommandInput(BaseModel):
 
 @router.get('/health')
 async def health():
-    return {'ok': True, 'phase': 3}
+    return {'ok': True, 'phase': 4}
 
 
 @router.get('/session')

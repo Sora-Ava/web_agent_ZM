@@ -15,6 +15,32 @@ class TaskInput(BaseModel):
     rows: list[dict[str, StrictStr]] = Field(min_length=1, max_length=500)
 
 
+class ApproveInput(BaseModel):
+    ids: list[str] = Field(min_length=1, max_length=200)
+    confirmed: Literal[True]
+    expected_version: int = Field(ge=1)
+
+
+@router.get('/tasks/{identity}/repairs')
+async def list_repairs(identity: str, request: Request):
+    try:
+        request.app.state.tasks.repository.get(identity)
+        return request.app.state.tasks.repairs.list(identity)
+    except KeyError as exc:
+        failure(exc)
+
+
+@router.post('/tasks/{identity}/repairs/approve', status_code=201)
+async def approve_repairs(identity: str, body: ApproveInput, request: Request):
+    try:
+        record = request.app.state.tasks.repairs.approve(identity, body.ids, body.expected_version, body.confirmed)
+        await request.app.state.bus.publish({'type': 'workflows_changed'})
+        await request.app.state.tasks.publish()
+        return record
+    except (ValueError, KeyError, BusyError) as exc:
+        failure(exc)
+
+
 @router.get('/tasks')
 async def list_tasks(request: Request):
     return request.app.state.tasks.repository.list()

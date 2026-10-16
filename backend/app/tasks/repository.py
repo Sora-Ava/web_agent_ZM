@@ -36,6 +36,8 @@ class TaskRepository:
                     db.execute('UPDATE exported_files SET task_id=?,row_index=? WHERE id=?',
                         (metadata.get('task_id'), metadata.get('row_index'), row['id']))
             db.execute('CREATE INDEX IF NOT EXISTS task_files_lookup ON exported_files(task_id,row_index)')
+            if 'model_calls' not in {row[1] for row in db.execute('PRAGMA table_info(tasks)')}:
+                db.execute('ALTER TABLE tasks ADD COLUMN model_calls INTEGER NOT NULL DEFAULT 0')
 
     def create(self, record, rows):
         definition = WorkflowDefinition.model_validate(record['definition'])
@@ -53,7 +55,7 @@ class TaskRepository:
                 raise ValueError(f'第 {index + 1} 行：{exc}') from None
         identity, stamp = uuid4().hex, now()
         with self.connection() as db:
-            db.execute('INSERT INTO tasks VALUES(?,?,?,?,?,?,?)',
+            db.execute('INSERT INTO tasks(id,flow_id,version,definition,status,created_at,updated_at) VALUES(?,?,?,?,?,?,?)',
                 (identity, record['id'], record['version'], definition.model_dump_json(), 'queued', stamp, stamp))
             db.executemany('INSERT INTO task_rows VALUES(?,?,?,?,NULL)',
                 [(identity, i, json.dumps(v, ensure_ascii=False), 'queued') for i, v in enumerate(values)])
@@ -67,7 +69,6 @@ class TaskRepository:
             task = dict(record)
             task['definition'] = json.loads(task['definition'])
             task['name'] = task['definition']['name']
-            task['model_calls'] = 0
             task['rows'] = []
             steps, files = {}, {}
             for step in db.execute('SELECT row_index,record FROM task_steps WHERE task_id=? ORDER BY id', (identity,)):
@@ -97,7 +98,7 @@ class TaskRepository:
             for record in records:
                 counts = {r[0]: r[1] for r in db.execute('SELECT status,COUNT(*) FROM task_rows WHERE task_id=? GROUP BY status', (record['id'],))}
                 result.append({k: record[k] for k in ('id', 'flow_id', 'version', 'status', 'created_at', 'updated_at')} |
-                    {'name': json.loads(record['definition'])['name'], 'counts': counts, 'total': sum(counts.values()), 'model_calls': 0})
+                    {'name': json.loads(record['definition'])['name'], 'counts': counts, 'total': sum(counts.values()), 'model_calls': record['model_calls']})
         return result
 
     def next_queued(self):
@@ -119,6 +120,8 @@ class TaskRepository:
         with self.connection() as db:
             db.execute('INSERT INTO task_steps(task_id,row_index,record) VALUES(?,?,?)',
                 (identity, index, json.dumps(record, ensure_ascii=False)))
+            if record.get('model_calls'):
+                db.execute('UPDATE tasks SET model_calls=model_calls+? WHERE id=?', (record['model_calls'], identity))
 
     def finish_remaining(self, identity, status):
         with self.connection() as db:
