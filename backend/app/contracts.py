@@ -49,3 +49,7 @@ class PageObservation(BaseModel):
 class SessionState(BaseModel):
     status: Literal['idle', 'starting', 'ready', 'running', 'failed', 'closed']
     current_url: str | None = None
+
+
+class DeleteConfirmed(BaseModel):
+    confirmed: Literal[True]

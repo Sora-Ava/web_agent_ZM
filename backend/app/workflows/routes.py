@@ -7,6 +7,7 @@ from ..sessions import BusyError
 from .models import WorkflowDefinition
 from .repository import VersionConflict
 from .suggestions import ParameterSuggester
+from ..contracts import DeleteConfirmed
 
 router = APIRouter(prefix='/api')
 
@@ -28,6 +29,20 @@ class ProposalInput(BaseModel):
 class RunInput(BaseModel):
     parameters: dict[str, StrictStr] = Field(default_factory=dict)
     version: int | None = Field(default=None, ge=1)
+
+
+class DeleteWorkflowInput(DeleteConfirmed):
+    expected_version: int = Field(ge=1)
+
+
+@router.delete('/workflows/{flow_id}')
+async def delete_workflow(flow_id: str, body: DeleteWorkflowInput, request: Request):
+    try:
+        request.app.state.repository.delete(flow_id, body.expected_version)
+        await request.app.state.bus.publish({'type':'workflows_changed'})
+        return {'ok': True}
+    except (ValueError, KeyError, BusyError) as exc:
+        failure(exc)
 
 
 def failure(exc):
