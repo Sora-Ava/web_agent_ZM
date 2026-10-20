@@ -43,9 +43,9 @@ async def test_diagnostics_only_exposes_safe_readiness(session):
         response=await c.get('/api/diagnostics')
         assert response.status_code==200
         data=response.json()
-        assert data['site_type']=='demo' and data['browser']['installed']
+        assert data['site_type']=='generic' and data['browser']['installed']
         encoded=json.dumps(data)
-        assert session.settings.site_password.get_secret_value() not in encoded
+        assert session.settings.credentials.resolve('test',session.settings.site_url).password.get_secret_value() not in encoded
         assert 'llm_api_key' not in encoded and 'site_username' not in encoded
 
 

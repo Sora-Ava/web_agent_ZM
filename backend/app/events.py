@@ -60,7 +60,7 @@ class CommandRunner:
                 try:
                     self.repository.record(BrowserAction.model_validate(event['record_action']), command['id'], command['instruction'], event['url_before'], event.get('url_after'))
                 except ValueError:
-                    self.repository.warn('部分操作未记录：目前仅支持配置站点内的标准流程，跨站操作暂不支持固化，请检查草稿完整性')
+                    self.repository.warn('部分操作未记录：流程仅支持单个来源，切换网站请新建录制，并检查草稿完整性')
             await self.bus.publish({key: value for key, value in event.items() if key not in ('record_action', 'url_before', 'url_after')})
         try:
             await self.bus.publish({'type': 'command_started', 'command': dict(command)})

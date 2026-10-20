@@ -51,14 +51,12 @@ class TaskRepository:
 
     def create(self, record, rows):
         definition = WorkflowDefinition.model_validate(record['definition'])
-        if definition.site_key != self.workflows.scope:
-            raise ValueError('当前网站与流程所属系统不一致')
         if not 1 <= len(rows) <= 500:
             raise ValueError('每个任务需要 1 至 500 行参数')
         values = []
         for index, row in enumerate(rows):
             try:
-                value = validate_parameters(definition, row)
+                value = validate_parameters(definition, row, self.workflows.credentials)
                 self.workflows._no_secrets(value)
                 values.append(value)
             except ValueError as exc:

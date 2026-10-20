@@ -64,28 +64,13 @@ class BrowserOperations:
         if not self.page or self.page.is_closed():
             raise ValueError('请先启动浏览器')
 
-    async def login(self) -> ActionResult:
-        try:
-            self.require_page()
-            c = self.settings
-            await self.page.goto(c.site_url, wait_until='domcontentloaded')
-            if await self.page.locator(c.logged_in_selector).is_visible():
-                return ActionResult(status='success', message='当前会话已登录')
-            await self.page.locator(c.login_username_selector).fill(c.site_username.get_secret_value())
-            await self.page.locator(c.login_password_selector).fill(c.site_password.get_secret_value())
-            await self.page.locator(c.login_submit_selector).click()
-            await self.page.locator(c.logged_in_selector).wait_for(state='visible')
-            return ActionResult(status='success', message='登录成功')
-        except Exception:
-            return ActionResult(status='failed', message='登录失败：请检查网站、凭据和登录定位配置')
-
     async def observe(self, *, generic=False) -> PageObservation:
         self.require_page()
         parsed = urlsplit(self.page.url)
         if generic:
             if self.page.url != 'about:blank':
                 web_url(self.page.url)
-        elif origin(self.page.url) != origin(self.settings.site_url):
+        elif origin(self.page.url) != (origin(self.flow_scope) if self.flow_scope else None):
             raise ValueError('当前页面不属于已配置系统')
         data = await self.page.evaluate(OBSERVE)
         safe = self.settings.scrub(data)
@@ -97,13 +82,13 @@ class BrowserOperations:
             self.require_page()
             if action.kind == 'navigate':
                 web_url(action.value)
-                if not generic and origin(action.value) != origin(self.settings.site_url):
+                if not generic and origin(action.value) != (origin(self.flow_scope) if self.flow_scope else None):
                     raise ValueError('只能导航至已配置系统')
                 await self.page.goto(action.value, wait_until='domcontentloaded')
                 return ActionResult(status='success', message='页面已打开')
             if generic:
                 web_url(self.page.url)
-            elif origin(self.page.url) != origin(self.settings.site_url):
+            elif origin(self.page.url) != (origin(self.flow_scope) if self.flow_scope else None):
                 raise ValueError('当前页面不属于已配置系统')
             loc = self.locator(action.target)
             count = await loc.count()

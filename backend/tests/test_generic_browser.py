@@ -63,9 +63,10 @@ async def test_generic_does_not_follow_non_web_link(session):
     result=await session.execute(BrowserAction(kind='click',target={'kind':'text','value':'local file'}),generic=True)
     assert result.status=='failed'
 
-async def test_cross_site_action_is_not_added_to_legacy_draft(session):
+async def test_cross_site_action_is_not_added_to_bound_draft(session):
     app=create_app(session.settings,session)
     repo=app.state.repository
+    repo.bind_scope(session.page.url)
     before=repo.draft()['revision']
     with pytest.raises(ValueError):
         repo.record(BrowserAction(kind='navigate',value='https://search.test/'),'test','visit',session.page.url)

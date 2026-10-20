@@ -4,7 +4,7 @@ from playwright.async_api import async_playwright, expect
 
 from app.config import ROOT
 from test_ui import local_app
-from workflow_samples import sample_workflow
+from workflow_samples import sample_with_login as sample_workflow
 from app.tasks.repository import TaskRepository
 from app.workflows.repository import WorkflowRepository
 from app.workflows.models import site_key

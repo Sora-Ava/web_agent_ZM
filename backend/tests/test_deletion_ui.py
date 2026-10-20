@@ -1,7 +1,7 @@
 from playwright.async_api import async_playwright, expect
 
 from test_ui import local_app
-from workflow_samples import sample_workflow
+from workflow_samples import sample_with_login as sample_workflow
 from app.config import ROOT
 
 
