@@ -12,8 +12,9 @@ async def test_record_confirm_save_replay_no_data_and_immutable_versions(local_a
         try:
             await page.goto(url)
             await expect(page.locator('.local-status')).to_contain_text('本地服务已连接')
-            await page.get_by_role('button', name='启动并登录').click()
+            await page.get_by_role('button', name='启动浏览器').click()
             await expect(page.get_by_text('已就绪', exact=True)).to_be_visible(timeout=10000)
+            assert (await page.request.post(url+'/fixture-login')).ok
             for index, instruction in enumerate(['点击生产查询', '输入批次号 PC001 和物料层级 2', '点击查询', '导出文件']):
                 await page.get_by_label('下一步操作').fill(instruction)
                 await page.get_by_role('button', name='发送指令', exact=True).click()

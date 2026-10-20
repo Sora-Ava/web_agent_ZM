@@ -1,3 +1,7 @@
+import json
+from pydantic import SecretStr
+from app.login import LoginController
+from app.workflows.models import LoginSpec
 import socket
 import threading
 import time
@@ -29,16 +33,28 @@ def demo_url():
     thread.join(timeout=5)
 
 
+class FixtureSettings(Settings):
+    site_url: str
+
+
+def set_secret(settings, secret):
+    settings.credentials_json = SecretStr(json.dumps({'test': {'origin': settings.site_url, 'username':'operator', 'password':secret}}))
+    settings.__dict__.pop('credentials',None)
+
+
 @pytest_asyncio.fixture
 async def session(tmp_path, demo_url):
-    settings = Settings(_env_file=None, site_url=demo_url + '/demo/login', download_dir=tmp_path, database_path=tmp_path / 'agent.sqlite3',
+    settings = FixtureSettings(_env_file=None, site_url=demo_url + '/demo/login', download_dir=tmp_path, database_path=tmp_path / 'agent.sqlite3',
                         headless=True, action_timeout_ms=3000, query_timeout_ms=3000, download_timeout_ms=3000)
     s = BrowserSession(settings)
     await s.start()
     errors = []
     s.page.on('pageerror', lambda error: errors.append(str(error)))
     try:
-        result = await s.login()
+        settings.credentials_json = SecretStr(json.dumps({'test': {'origin': demo_url, 'username':'operator', 'password':'demo-password'}}))
+        spec = LoginSpec(url=settings.site_url, credential_ref='test', username={'kind':'css','value':'#username'},password={'kind':'css','value':'#password'},submit={'kind':'css','value':'#login'},success={'kind':'css','value':'#logged-in'})
+        result = await LoginController(s).execute(spec, {}, demo_url)
+        s.flow_scope = demo_url
         assert result.status == 'success', (s.page.url, await s.page.locator('body').inner_text(), errors)
         yield s
     finally:

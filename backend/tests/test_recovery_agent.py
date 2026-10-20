@@ -16,7 +16,7 @@ def response(arguments):
 
 
 async def test_recovery_only_proposes_observed_locator_and_redacts_payload():
-    settings = Settings(_env_file=None, llm_base_url='http://llm.test/v1', llm_model='test', llm_api_key='synthetic-key', site_password='synthetic-password')
+    settings = Settings(_env_file=None, llm_base_url='http://llm.test/v1', llm_model='test', llm_api_key='synthetic-key', credentials_json=json.dumps({'secret_ref':{'origin':'http://llm.test','username':'synthetic-user','password':'synthetic-password'}}))
     payloads = []
     def handler(request):
         payloads.append(json.loads(request.content))

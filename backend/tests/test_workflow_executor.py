@@ -35,6 +35,7 @@ async def test_no_data_branch_prevents_export(session):
 async def test_wrong_site_and_ambiguous_target_fail_without_guessing(session):
     before = session.page.url
     wrong = sample_workflow('http://wrong.test')
+    wrong.entry_url = session.settings.site_url  # invalid definition, not a global SITE_URL restriction
     result = await WorkflowExecutor(session).execute(wrong, {'batch': '1', 'level': '2'})
     assert result.status == 'failed' and session.page.url == before
     definition = sample_workflow(session.settings.site_url.split('/demo')[0])

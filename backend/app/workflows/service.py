@@ -32,9 +32,7 @@ class WorkflowRunService:
             raise BusyError('浏览器正在执行操作')
         record = self.tasks.repository.workflows.get(flow_id, version)
         definition = WorkflowDefinition.model_validate(record['definition'])
-        validate_parameters(definition, parameters)
-        if definition.site_key != self.tasks.repository.workflows.scope:
-            raise ValueError('当前网站与流程所属系统不一致')
+        validate_parameters(definition, parameters, self.tasks.session.settings.credentials)
         self.identity = await self.tasks.submit(flow_id, version, [parameters])
         await self.tasks.release_authoring()
         await asyncio.sleep(0)

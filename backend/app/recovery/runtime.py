@@ -9,7 +9,7 @@ class FatalRecovery(Exception):
 
 
 class RecoveryRuntime:
-    def __init__(self, session, agent, overrides, emit, checkpoint, restore):
+    def __init__(self, session, agent, overrides, emit, checkpoint, restore, values=None, scope=None):
         self.session = session
         self.agent = agent
         self.overrides = overrides
@@ -19,6 +19,9 @@ class RecoveryRuntime:
         self.calls = 0
         self.repairs = []
         self.login_attempts = 0
+        self.login_spec = None
+        self.values = values or {}
+        self.scope = scope
 
     async def boundary(self):
         if self.checkpoint:
@@ -33,14 +36,19 @@ class RecoveryRuntime:
         evidence = await completed(self.session, action, before)
         if evidence:
             return evidence
+        if action.kind == 'download' and result.effect_started:
+            return ActionResult(status='failed', message='导出已触发但完成结果不确定，请人工检查；未再次点击导出', effect_started=True)
         if not await browser_alive(self.session):
             raise FatalRecovery('浏览器不可用，已停止后续派发，请重启浏览器后启动队列')
-        if await login_page(self.session):
+        if await login_page(self.session, self.login_spec):
+            if not self.login_spec:
+                raise FatalRecovery('当前流程没有登录步骤，请先运行登录流程或添加登录步骤')
             if self.login_attempts:
                 raise FatalRecovery('重新登录后再次失效，已停止后续派发')
             self.login_attempts += 1
             await self.boundary()
-            login = await self.session.login()
+            from ..login import LoginController
+            login = await LoginController(self.session).execute(self.login_spec, self.values, self.scope, force=True)
             if self.emit:
                 await self.emit({'type': 'login_recovery', 'id': f'{step.id}:login', 'name': '登录过期恢复', 'index': index, 'total': total,
                     'model_calls': 0, 'result': {'status': login.status, 'message': '程序重新登录成功' if login.status == 'success' else '程序重新登录失败'}})
@@ -58,7 +66,7 @@ class RecoveryRuntime:
             evidence = await completed(self.session, action, before)
             if evidence:
                 return evidence
-            if await login_page(self.session):
+            if await login_page(self.session, self.login_spec):
                 raise FatalRecovery('重新登录后仍失效，已停止后续派发')
         if action.kind == 'download' and result.effect_started:
             return ActionResult(status='failed', message='导出已触发但完成结果不确定，请人工检查；未再次点击导出', effect_started=True)

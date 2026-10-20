@@ -15,9 +15,8 @@ async def diagnostics(request: Request):
             installed = Path(p.chromium.executable_path).is_file()
     except Exception:
         pass
-    return {'site_type': 'demo' if '/demo/login' in c.site_url else 'configured',
-        'login_configured': all((c.site_url, c.site_username.get_secret_value(), c.site_password.get_secret_value(),
-            c.login_username_selector, c.login_password_selector, c.login_submit_selector, c.logged_in_selector)),
+    return {'site_type': 'generic',
+        'login_configured': bool(c.credentials.metadata()),
         'model_configured': bool(c.llm_base_url and c.llm_model),
         'query_wait_configured': bool(c.loading_selector and c.result_selector),
         'browser': {'installed': installed, 'status': request.app.state.session.state().status},

@@ -24,6 +24,8 @@ class BrowserSession(BrowserOperations):
         self.playwright = None
         self.status = 'idle'
         self.busy = False
+        self.authenticated = {}
+        self.flow_scope = None
         self._lifecycle = asyncio.Lock()
 
     def state(self) -> SessionState:
@@ -60,6 +62,8 @@ class BrowserSession(BrowserOperations):
         return self.state()
 
     async def _dispose(self):
+        self.authenticated.clear()
+        self.flow_scope = None
         browser, playwright = self.browser, self.playwright
         self.page = self.context = self.browser = self.playwright = None
         if browser:
