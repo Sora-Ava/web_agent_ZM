@@ -2,7 +2,7 @@ import { useState } from 'react';
 import { ArrowDown, ArrowUp, Plus, Save, Trash2, X } from 'lucide-react';
 import type { Definition, Locator, Proposal, Step } from '../workflows';
 
-const verbs:Record<string,string>={navigate:'打开页面',click:'点击',fill:'填写',select:'选择',wait:'等待',download:'导出'};
+const verbs:Record<string,string>={navigate:'打开页面',click:'点击',fill:'填写',select:'选择',wait:'等待',download:'导出',press:'回车提交'};
 const outcomes={continue:'继续下一步',no_data:'标记无数据并结束',finish:'结束流程'};
 
 export default function WorkflowEditor({proposal,editing,onSave,onClose}:{proposal:Proposal;editing:boolean;onSave:(definition:Definition)=>Promise<void>;onClose:()=>void}){

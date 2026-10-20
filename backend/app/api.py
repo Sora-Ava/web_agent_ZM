@@ -40,14 +40,10 @@ async def start(request: Request):
         async with session.reserve():
             request.app.state.tasks.authoring = True
             await session.start()
-            login = await session.login()
-            if login.status != 'success':
-                session.status = 'failed'
-            else:
-                request.app.state.runner.agent.history = []
-                session.status = 'ready'
-            await request.app.state.bus.publish({'type': 'session', 'message': login.message})
-        return {**request.app.state.runner.snapshot(), 'login': login.model_dump()}
+            request.app.state.runner.agent.history = []
+            session.status = 'ready'
+            await request.app.state.bus.publish({'type': 'session', 'message': '浏览器已就绪，请指定要访问的网址'})
+        return request.app.state.runner.snapshot()
     except BusyError:
         raise HTTPException(409, '浏览器忙碌，请等待当前指令完成')
     except Exception:
@@ -68,7 +64,7 @@ async def close(request: Request):
 async def command(body: CommandInput, request: Request):
     session = request.app.state.session
     if session.status != 'ready':
-        raise HTTPException(409, '请先启动浏览器并成功登录')
+        raise HTTPException(409, '请先启动浏览器')
     try:
         return {'id': await request.app.state.runner.submit(body.instruction)}
     except BusyError:

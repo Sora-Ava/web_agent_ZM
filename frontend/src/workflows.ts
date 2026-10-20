@@ -1,5 +1,5 @@
 export type Locator = {kind:'role'|'label'|'text'|'css';value:string;role:string|null};
-export type Action = {kind:'navigate'|'click'|'fill'|'select'|'wait'|'download';target:Locator|null;value:string|null;wait_for_query:boolean;name_parts:string[]};
+export type Action = {kind:'navigate'|'click'|'fill'|'select'|'wait'|'download'|'press';target:Locator|null;value:string|null;wait_for_query:boolean;name_parts:string[]};
 export type Parameter = {key:string;label:string;kind:'text'|'number';required:boolean;default:string|null};
 export type Condition = {target:Locator;state:'visible'|'hidden';when_true:'continue'|'no_data'|'finish';when_false:'continue'|'no_data'|'finish'};
 export type Step = {id:string;name:string;action:Action|null;value_parameter:string|null;condition:Condition|null};

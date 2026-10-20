@@ -25,8 +25,9 @@ OBSERVE = r'''() => {
    const tag=el.tagName.toLowerCase();
    const label=safeText(el.labels?.[0]);
    const name=el.getAttribute('aria-label') || label || (['input','textarea'].includes(tag)||el.isContentEditable ? el.getAttribute('placeholder')||'' : safeText(el));
-   const role=el.getAttribute('role') || ({button:'button',a:'link',input:'textbox',textarea:'textbox',select:'combobox'}[tag]);
-   elements.push({role,name:name.slice(0,200),label:label?.slice(0,200),tag,disabled:!!el.disabled});
+   const role=el.getAttribute('role') || (tag==='input'&&el.type==='search'?'searchbox':({button:'button',a:'link',input:'textbox',textarea:'textbox',select:'combobox'}[tag]));
+   const selector=el.id&&document.querySelectorAll('#'+CSS.escape(el.id)).length===1?'#'+CSS.escape(el.id):null;
+   elements.push({role,name:name.slice(0,200),label:label?.slice(0,200),selector,tag,disabled:!!el.disabled});
  }
  return {text:text.slice(0,16000),elements:elements.slice(0,150)};
 }'''
@@ -35,6 +36,18 @@ OBSERVE = r'''() => {
 def origin(url: str):
     parsed = urlsplit(url)
     return parsed.scheme, parsed.hostname, parsed.port or (443 if parsed.scheme == 'https' else 80)
+
+
+def web_url(url: str):
+    parsed = urlsplit(url)
+    if (parsed.scheme not in ('http', 'https') or not parsed.hostname
+            or parsed.username is not None or parsed.password is not None):
+        raise ValueError('只支持不含账号密码的 HTTP(S) 网址')
+    # Validate port and reject whitespace/control characters instead of browser normalization.
+    _ = parsed.port
+    if any(char.isspace() or ord(char) < 32 for char in url):
+        raise ValueError('网址包含无效字符')
+    return url
 
 
 class BrowserOperations:
@@ -49,7 +62,7 @@ class BrowserOperations:
 
     def require_page(self):
         if not self.page or self.page.is_closed():
-            raise ValueError('请先启动浏览器并登录')
+            raise ValueError('请先启动浏览器')
 
     async def login(self) -> ActionResult:
         try:
@@ -66,25 +79,31 @@ class BrowserOperations:
         except Exception:
             return ActionResult(status='failed', message='登录失败：请检查网站、凭据和登录定位配置')
 
-    async def observe(self) -> PageObservation:
+    async def observe(self, *, generic=False) -> PageObservation:
         self.require_page()
         parsed = urlsplit(self.page.url)
-        if origin(self.page.url) != origin(self.settings.site_url):
+        if generic:
+            if self.page.url != 'about:blank':
+                web_url(self.page.url)
+        elif origin(self.page.url) != origin(self.settings.site_url):
             raise ValueError('当前页面不属于已配置系统')
         data = await self.page.evaluate(OBSERVE)
         safe = self.settings.scrub(data)
         return PageObservation(url=urlunsplit((parsed.scheme, parsed.netloc, parsed.path, '', '')), **safe)
 
-    async def execute(self, action: BrowserAction) -> ActionResult:
+    async def execute(self, action: BrowserAction, *, generic=False) -> ActionResult:
         effect_started = False
         try:
             self.require_page()
             if action.kind == 'navigate':
-                if origin(action.value) != origin(self.settings.site_url):
+                web_url(action.value)
+                if not generic and origin(action.value) != origin(self.settings.site_url):
                     raise ValueError('只能导航至已配置系统')
                 await self.page.goto(action.value, wait_until='domcontentloaded')
                 return ActionResult(status='success', message='页面已打开')
-            if origin(self.page.url) != origin(self.settings.site_url):
+            if generic:
+                web_url(self.page.url)
+            elif origin(self.page.url) != origin(self.settings.site_url):
                 raise ValueError('当前页面不属于已配置系统')
             loc = self.locator(action.target)
             count = await loc.count()
@@ -96,6 +115,10 @@ class BrowserOperations:
             # Credential fields are exclusively owned by the direct login routine.
             if await loc.evaluate('(el)=>el.matches("input[type=password],input[type=hidden]")'):
                 raise ValueError('敏感字段只能通过登录程序操作')
+            if generic and action.kind in ('click', 'press', 'download'):
+                href = await loc.evaluate('(el)=>el.closest("a[href]")?.href || null')
+                if href:
+                    web_url(href)
             if action.kind == 'download':
                 async with self.page.expect_download(timeout=self.settings.download_timeout_ms) as pending:
                     effect_started = True
@@ -144,6 +167,8 @@ class BrowserOperations:
                 await loc.fill(action.value)
             elif action.kind == 'select':
                 await loc.select_option(action.value)
+            elif action.kind == 'press':
+                await loc.press(action.value)
             elif action.kind == 'wait':
                 await loc.wait_for(state='visible')
             if action.wait_for_query:

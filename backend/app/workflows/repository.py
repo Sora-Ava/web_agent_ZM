@@ -59,11 +59,15 @@ class WorkflowRepository:
             db.execute('INSERT INTO drafts(id,site_key,active) VALUES(?,?,1)', (uuid4().hex, self.scope))
         return self.draft()
 
-    def record(self, action: BrowserAction, command_id: str, instruction: str, url_before: str):
+    def record(self, action: BrowserAction, command_id: str, instruction: str, url_before: str, url_after: str | None = None):
         if site_key(url_before) != self.scope:
             raise ValueError('录制页面不属于当前系统')
+        if url_after is not None and site_key(url_after) != self.scope:
+            raise ValueError('跨站操作暂不支持保存为标准流程')
         data = action.model_dump()
         if action.kind == 'navigate':
+            if site_key(action.value) != self.scope:
+                raise ValueError('跨站导航暂不支持保存为标准流程')
             data['value'] = clean_entry_url(data['value'])
         url = clean_entry_url(url_before)
         self._no_secrets([data, instruction, url])
@@ -89,7 +93,7 @@ class WorkflowRepository:
         if not draft['steps']:
             raise ValueError('请先成功执行至少一个操作')
         parameters, steps = [], []
-        verbs = {'click': '点击', 'fill': '填写', 'select': '选择', 'wait': '等待', 'download': '导出', 'navigate': '打开页面'}
+        verbs = {'click': '点击', 'fill': '填写', 'select': '选择', 'wait': '等待', 'download': '导出', 'navigate': '打开页面', 'press': '回车提交'}
         for record in draft['steps']:
             action = BrowserAction.model_validate(record['action'])
             identity = str(record['id'])

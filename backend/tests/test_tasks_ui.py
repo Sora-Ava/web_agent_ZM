@@ -22,7 +22,7 @@ async def test_paste_batch_queue_mixed_results_and_history(local_app):
             # An invalid select option is a single-row browser failure, not a validation failure.
             await page.goto(url)
             await expect(page.locator('.local-status')).to_contain_text('本地服务已连接')
-            await page.get_by_role('button', name='启动并登录', exact=True).click()
+            await page.get_by_role('button', name='启动浏览器', exact=True).click()
             await expect(page.get_by_text('已就绪', exact=True)).to_be_visible()
             await page.get_by_role('button', name='流程：' + flow['name'], exact=True).click()
             await page.get_by_role('button', name='批量运行', exact=True).click()

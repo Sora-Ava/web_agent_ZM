@@ -58,10 +58,10 @@ class CommandRunner:
             if self.repository and event.get('record_action') and event.get('result', {}).get('status') == 'success':
                 from .contracts import BrowserAction
                 try:
-                    self.repository.record(BrowserAction.model_validate(event['record_action']), command['id'], command['instruction'], event['url_before'])
+                    self.repository.record(BrowserAction.model_validate(event['record_action']), command['id'], command['instruction'], event['url_before'], event.get('url_after'))
                 except ValueError:
-                    self.repository.warn('部分成功操作未能安全记录，请检查草稿完整性')
-            await self.bus.publish({key: value for key, value in event.items() if key not in ('record_action', 'url_before')})
+                    self.repository.warn('部分操作未记录：目前仅支持配置站点内的标准流程，跨站操作暂不支持固化，请检查草稿完整性')
+            await self.bus.publish({key: value for key, value in event.items() if key not in ('record_action', 'url_before', 'url_after')})
         try:
             await self.bus.publish({'type': 'command_started', 'command': dict(command)})
             result = await self.agent.run(instruction, self.session, emit=emit)
