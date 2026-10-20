@@ -78,7 +78,8 @@ async def test_unconfigured_model_is_explicit_failure(session):
 async def test_escaped_credentials_never_enter_actual_model_payload(session):
     from pydantic import SecretStr
     secret = 'synthetic"password\\with\nnewline'
-    session.settings.site_password = SecretStr(secret)
+    from conftest import set_secret
+    set_secret(session.settings, secret)
     await session.page.evaluate('(secret)=>{const el=document.createElement("p");el.textContent=secret;document.body.append(el)}', secret)
     requests = []
     def handler(request):

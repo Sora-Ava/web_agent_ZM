@@ -22,7 +22,7 @@ async def login_page():
 @demo_app.post('/demo/auth')
 async def auth(request: Request):
     data = await request.json()
-    if data != {'username': 'demo', 'password': 'demo-password'}:
+    if data != {'username': 'operator', 'password': 'demo-password'}:
         return JSONResponse({'error': 'invalid credentials'}, status_code=401)
     response = JSONResponse({'ok': True})
     response.set_cookie('demo_session', 'local-demo', httponly=True, samesite='strict')

@@ -1,4 +1,5 @@
 import asyncio
+import time
 
 from ..sessions import BusyError
 from ..workflows.executor import WorkflowExecutor
@@ -108,6 +109,7 @@ class TaskService:
                 self.active_id = identity
                 self.command_runner.agent.history = []
                 self.repository.update_task(identity, 'running')
+                started = time.monotonic()
                 try:
                     await self._run(identity)
                 except asyncio.CancelledError:
@@ -118,6 +120,7 @@ class TaskService:
                     self.repository.update_task(identity, 'failed')
                     self.repository.finish_remaining(identity, 'skipped')
                 finally:
+                    self.repository.update_timing(identity, round(time.monotonic()-started, 3))
                     self.session.downloads.task_context = (None, None)
                     self.active_id = None
             await self.publish()

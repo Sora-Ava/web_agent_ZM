@@ -1,5 +1,6 @@
 import asyncio
 from contextlib import asynccontextmanager
+from contextlib import suppress
 
 from playwright.async_api import async_playwright
 
@@ -23,6 +24,8 @@ class BrowserSession(BrowserOperations):
         self.playwright = None
         self.status = 'idle'
         self.busy = False
+        self.authenticated = {}
+        self.flow_scope = None
         self._lifecycle = asyncio.Lock()
 
     def state(self) -> SessionState:
@@ -45,6 +48,7 @@ class BrowserSession(BrowserOperations):
                 return self.state()
             self.status = 'starting'
             try:
+                await self._dispose()
                 self.playwright = await async_playwright().start()
                 self.browser = await self.playwright.chromium.launch(headless=self.settings.headless)
                 self.context = await self.browser.new_context(accept_downloads=True, viewport={'width': 1280, 'height': 800})
@@ -58,11 +62,16 @@ class BrowserSession(BrowserOperations):
         return self.state()
 
     async def _dispose(self):
-        if self.browser:
-            await self.browser.close()
-        if self.playwright:
-            await self.playwright.stop()
+        self.authenticated.clear()
+        self.flow_scope = None
+        browser, playwright = self.browser, self.playwright
         self.page = self.context = self.browser = self.playwright = None
+        if browser:
+            with suppress(Exception):
+                await asyncio.wait_for(browser.close(), 5)
+        if playwright:
+            with suppress(Exception):
+                await asyncio.wait_for(playwright.stop(), 5)
 
     async def close(self):
         async with self._lifecycle:

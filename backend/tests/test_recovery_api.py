@@ -4,7 +4,8 @@ import httpx
 
 from app.main import create_app
 from app.contracts import LocatorSpec, ActionResult
-from workflow_samples import sample_workflow
+from workflow_samples import sample_workflow, sample_with_login
+from app.login import LoginController
 from test_recovery_executor import Proposer
 
 
@@ -41,16 +42,16 @@ async def test_recovered_task_audit_approval_and_zero_call_new_version(session, 
 
 async def test_fatal_login_blocks_next_queued_task(session, monkeypatch):
     app = create_app(session.settings, session)
-    flow = app.state.repository.create(sample_workflow(session.settings.site_url.split('/demo')[0]), True)
+    flow = app.state.repository.create(sample_with_login(session.settings.site_url.split('/demo')[0]), True)
     app.state.tasks.authoring = True
     async def fail(action):
         await session.context.clear_cookies()
         await session.page.goto(session.settings.site_url)
         return ActionResult(status='failed', message='过期')
-    async def login():
+    async def login(self,*args,**kwargs):
         return ActionResult(status='failed', message='登录失败')
     monkeypatch.setattr(session, 'execute', fail)
-    monkeypatch.setattr(session, 'login', login)
+    monkeypatch.setattr(LoginController, 'execute', login)
     first = await app.state.tasks.submit(flow['id'], 1, [{'batch': 'F1'}, {'batch': 'F2'}])
     second = await app.state.tasks.submit(flow['id'], 1, [{'batch': 'NEXT'}])
     await app.state.tasks.release_authoring()

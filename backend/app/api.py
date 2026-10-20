@@ -6,6 +6,8 @@ from fastapi.responses import FileResponse
 from pydantic import BaseModel, Field, field_validator
 
 from .sessions import BusyError
+from .contracts import DeleteConfirmed
+from .connections import until_disconnected
 
 router = APIRouter(prefix='/api')
 
@@ -23,7 +25,7 @@ class CommandInput(BaseModel):
 
 @router.get('/health')
 async def health():
-    return {'ok': True, 'phase': 4}
+    return {'ok': True, 'phase': 5, 'app': 'web-agent-zm'}
 
 
 @router.get('/session')
@@ -38,14 +40,10 @@ async def start(request: Request):
         async with session.reserve():
             request.app.state.tasks.authoring = True
             await session.start()
-            login = await session.login()
-            if login.status != 'success':
-                session.status = 'failed'
-            else:
-                request.app.state.runner.agent.history = []
-                session.status = 'ready'
-            await request.app.state.bus.publish({'type': 'session', 'message': login.message})
-        return {**request.app.state.runner.snapshot(), 'login': login.model_dump()}
+            request.app.state.runner.agent.history = []
+            session.status = 'ready'
+            await request.app.state.bus.publish({'type': 'session', 'message': '浏览器已就绪，请指定要访问的网址'})
+        return request.app.state.runner.snapshot()
     except BusyError:
         raise HTTPException(409, '浏览器忙碌，请等待当前指令完成')
     except Exception:
@@ -66,7 +64,7 @@ async def close(request: Request):
 async def command(body: CommandInput, request: Request):
     session = request.app.state.session
     if session.status != 'ready':
-        raise HTTPException(409, '请先启动浏览器并成功登录')
+        raise HTTPException(409, '请先启动浏览器')
     try:
         return {'id': await request.app.state.runner.submit(body.instruction)}
     except BusyError:
@@ -76,6 +74,21 @@ async def command(body: CommandInput, request: Request):
 @router.get('/files')
 async def files(request: Request):
     return request.app.state.session.downloads.list()
+
+
+@router.delete('/files/{identity}')
+async def delete_file(identity: str, body: DeleteConfirmed, request: Request):
+    from .workflows.routes import failure
+    try:
+        if request.app.state.session.busy:
+            raise BusyError('浏览器执行或暂停中，不能删除文件')
+        request.app.state.session.downloads.delete(identity)
+        await request.app.state.bus.publish({'type':'files_changed'})
+        return {'ok': True, 'recycled': True}
+    except OSError:
+        raise HTTPException(409, '文件可能被占用或回收目录不可写，请关闭占用程序并检查目录权限后重试')
+    except (ValueError, KeyError, BusyError) as exc:
+        failure(exc)
 
 
 @router.get('/files/{identity}/download')
@@ -100,12 +113,14 @@ async def events(websocket: WebSocket):
     try:
         async with websocket.app.state.bus.subscribe() as queue:
             await websocket.send_json({'type': 'snapshot', **websocket.app.state.runner.snapshot()})
-            while True:
-                try:
-                    event = await asyncio.wait_for(queue.get(), 15)
-                except TimeoutError:
-                    event = {'type': 'heartbeat'}
-                await asyncio.wait_for(websocket.send_json(event), 5)
+            async def produce():
+                while True:
+                    try:
+                        event = await asyncio.wait_for(queue.get(), 15)
+                    except TimeoutError:
+                        event = {'type': 'heartbeat'}
+                    await asyncio.wait_for(websocket.send_json(event), 5)
+            await until_disconnected(websocket, produce)
     except (WebSocketDisconnect, RuntimeError, TimeoutError):
         pass
 
@@ -119,10 +134,12 @@ async def screen(websocket: WebSocket):
     state = websocket.app.state
     state.screen_clients += 1
     try:
-        while True:
-            if state.latest_frame:
-                await asyncio.wait_for(websocket.send_bytes(state.latest_frame), 3)
-            await asyncio.sleep(.5)
+        async def produce():
+            while True:
+                if state.latest_frame:
+                    await asyncio.wait_for(websocket.send_bytes(state.latest_frame), 3)
+                await asyncio.sleep(.5)
+        await until_disconnected(websocket, produce)
     except (WebSocketDisconnect, RuntimeError, TimeoutError):
         pass
     finally:

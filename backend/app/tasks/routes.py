@@ -5,6 +5,7 @@ from pydantic import BaseModel, Field, StrictStr
 
 from ..sessions import BusyError
 from ..workflows.routes import failure
+from ..contracts import DeleteConfirmed
 
 router = APIRouter(prefix='/api')
 
@@ -19,6 +20,20 @@ class ApproveInput(BaseModel):
     ids: list[str] = Field(min_length=1, max_length=200)
     confirmed: Literal[True]
     expected_version: int = Field(ge=1)
+
+
+@router.delete('/tasks/{identity}')
+async def delete_task(identity: str, body: DeleteConfirmed, request: Request):
+    state = request.app.state
+    try:
+        state.tasks.repository.delete(identity)
+        if state.workflows.identity == identity:
+            state.workflows.identity = None
+        state.session.downloads.bind_repository(state.tasks.repository)
+        await state.tasks.publish()
+        return {'ok': True}
+    except (ValueError, KeyError, BusyError) as exc:
+        failure(exc)
 
 
 @router.get('/tasks/{identity}/repairs')

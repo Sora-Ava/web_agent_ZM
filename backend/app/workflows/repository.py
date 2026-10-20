@@ -6,7 +6,8 @@ from pathlib import Path
 from uuid import uuid4
 
 from ..contracts import BrowserAction
-from .models import ConditionSpec, WorkflowDefinition, WorkflowParameter, WorkflowStep, clean_entry_url, site_key
+from ..credentials import secret_variants
+from .models import ConditionSpec, WorkflowDefinition, WorkflowParameter, WorkflowStep, LoginSpec, clean_entry_url, site_key
 
 
 class VersionConflict(ValueError):
@@ -14,10 +15,11 @@ class VersionConflict(ValueError):
 
 
 class WorkflowRepository:
-    def __init__(self, path: Path, scope: str, secrets=()):
+    def __init__(self, path: Path, scope: str | None = None, secrets=(), credentials=None):
         self.path = Path(path)
         self.path.parent.mkdir(parents=True, exist_ok=True)
-        self.scope = scope
+        self.scope = scope or ''
+        self.credentials = credentials
         self.secrets = tuple(secret for secret in secrets if secret)
         with self.connection() as db:
             db.executescript('''
@@ -27,8 +29,13 @@ class WorkflowRepository:
               CREATE TABLE IF NOT EXISTS workflow_versions(flow_id TEXT NOT NULL, version INTEGER NOT NULL, definition TEXT NOT NULL, created_at TEXT NOT NULL, PRIMARY KEY(flow_id,version));
               CREATE UNIQUE INDEX IF NOT EXISTS active_draft ON drafts(site_key) WHERE active=1;
             ''')
-            if not db.execute('SELECT id FROM drafts WHERE site_key=? AND active=1', (scope,)).fetchone():
-                db.execute('INSERT INTO drafts(id,site_key,active) VALUES(?,?,1)', (uuid4().hex, scope))
+            active = db.execute('SELECT site_key FROM drafts WHERE active=1 ORDER BY rowid DESC LIMIT 1').fetchone()
+            if active and scope is None:
+                self.scope = active['site_key']
+            if not db.execute('SELECT id FROM drafts WHERE site_key=? AND active=1', (self.scope,)).fetchone():
+                db.execute('INSERT INTO drafts(id,site_key,active) VALUES(?,?,1)', (uuid4().hex, self.scope))
+            if 'deleted_at' not in {r[1] for r in db.execute('PRAGMA table_info(workflows)')}:
+                db.execute('ALTER TABLE workflows ADD COLUMN deleted_at TEXT')
 
     @contextmanager
     def connection(self):
@@ -39,7 +46,7 @@ class WorkflowRepository:
 
     def _no_secrets(self, value):
         encoded = json.dumps(value, ensure_ascii=False)
-        if any(secret in encoded or json.dumps(secret, ensure_ascii=False)[1:-1] in encoded for secret in self.secrets):
+        if any(variant in encoded for secret in self.secrets for variant in secret_variants(secret)):
             raise ValueError('流程内容包含配置凭据，不能保存')
 
     def draft(self):
@@ -50,18 +57,48 @@ class WorkflowRepository:
             step['action'] = json.loads(step['action'])
         return {'id': row['id'], 'revision': f'{row["id"]}:{row["revision"]}', 'steps': steps, 'warnings': json.loads(row['warnings'])}
 
-    def reset_draft(self):
+    def reset_draft(self, scope=None):
         with self.connection() as db:
             db.execute('BEGIN IMMEDIATE')
-            db.execute('UPDATE drafts SET active=0 WHERE site_key=?', (self.scope,))
+            db.execute('UPDATE drafts SET active=0 WHERE active=1')
+            self.scope = site_key(scope) if scope else ''
             db.execute('INSERT INTO drafts(id,site_key,active) VALUES(?,?,1)', (uuid4().hex, self.scope))
         return self.draft()
 
-    def record(self, action: BrowserAction, command_id: str, instruction: str, url_before: str):
+    def bind_scope(self, url):
+        scope = site_key(url)
+        if self.scope and self.scope != scope:
+            raise ValueError('来源变化，请新建录制后再操作')
+        if not self.scope:
+            with self.connection() as db:
+                db.execute('UPDATE drafts SET site_key=? WHERE site_key=? AND active=1', (scope, self.scope))
+            self.scope = scope
+
+    def record_login(self, spec):
+        self.bind_scope(spec.url)
+        data = {'login': spec.model_dump()}
+        self._no_secrets(data)
+        with self.connection() as db:
+            draft = db.execute('SELECT id FROM drafts WHERE site_key=? AND active=1', (self.scope,)).fetchone()
+            db.execute('INSERT INTO draft_steps(draft_id,action,command_id,instruction,url_before) VALUES(?,?,?,?,?)',
+                (draft['id'], json.dumps(data, ensure_ascii=False), uuid4().hex, '显式登录', spec.url))
+            db.execute('UPDATE drafts SET revision=revision+1 WHERE id=?', (draft['id'],))
+
+    def record(self, action: BrowserAction, command_id: str, instruction: str, url_before: str, url_after: str | None = None):
+        if not self.scope:
+            if action.kind == 'navigate':
+                self.bind_scope(action.value)
+                url_before = action.value
+            else:
+                self.bind_scope(url_before)
         if site_key(url_before) != self.scope:
             raise ValueError('录制页面不属于当前系统')
+        if url_after is not None and site_key(url_after) != self.scope:
+            raise ValueError('跨站操作暂不支持保存为标准流程')
         data = action.model_dump()
         if action.kind == 'navigate':
+            if site_key(action.value) != self.scope:
+                raise ValueError('跨站导航暂不支持保存为标准流程')
             data['value'] = clean_entry_url(data['value'])
         url = clean_entry_url(url_before)
         self._no_secrets([data, instruction, url])
@@ -87,10 +124,20 @@ class WorkflowRepository:
         if not draft['steps']:
             raise ValueError('请先成功执行至少一个操作')
         parameters, steps = [], []
-        verbs = {'click': '点击', 'fill': '填写', 'select': '选择', 'wait': '等待', 'download': '导出', 'navigate': '打开页面'}
+        verbs = {'click': '点击', 'fill': '填写', 'select': '选择', 'wait': '等待', 'download': '导出', 'navigate': '打开页面', 'press': '回车提交'}
         for record in draft['steps']:
-            action = BrowserAction.model_validate(record['action'])
             identity = str(record['id'])
+            if 'login' in record['action']:
+                spec = LoginSpec.model_validate(record['action']['login'])
+                url_key, ref_key = 'login_url_'+identity, 'credential_'+identity
+                parameters.extend([WorkflowParameter(key=url_key,label='登录网址',kind='url',default=spec.url),
+                    WorkflowParameter(key=ref_key,label='登录凭据',kind='credential',default=spec.credential_ref)])
+                spec.url_parameter = url_key
+                spec.credential_parameter = ref_key
+                spec.credential_ref = None
+                steps.append(WorkflowStep(id='login_'+identity,name='登录并验证',login=spec))
+                continue
+            action = BrowserAction.model_validate(record['action'])
             label = action.target.value if action.target else '页面'
             parameter = None
             if action.kind in ('fill', 'select'):
@@ -107,8 +154,13 @@ class WorkflowRepository:
         if confirmed is not True:
             raise ValueError('请确认流程步骤与参数后保存')
         definition = WorkflowDefinition.model_validate(definition.model_dump())
-        if definition.site_key != self.scope:
-            raise ValueError('流程不属于当前系统')
+        if self.credentials:
+            for parameter in definition.parameters:
+                if parameter.kind == 'credential' and parameter.default:
+                    self.credentials.resolve(parameter.default, definition.site_key)
+            for step in definition.steps:
+                if step.login and step.login.credential_ref:
+                    self.credentials.resolve(step.login.credential_ref, definition.site_key)
         self._no_secrets(definition.model_dump())
         return definition
 
@@ -122,7 +174,7 @@ class WorkflowRepository:
                 draft = db.execute('SELECT id,revision FROM drafts WHERE site_key=? AND active=1', (self.scope,)).fetchone()
                 if source_revision != f'{draft["id"]}:{draft["revision"]}':
                     raise VersionConflict('录制草稿已变化，请重新生成并检查')
-            db.execute('INSERT INTO workflows VALUES(?,?,?)', (identity, self.scope, now))
+            db.execute('INSERT INTO workflows(id,site_key,created_at) VALUES(?,?,?)', (identity, definition.site_key, now))
             db.execute('INSERT INTO workflow_versions VALUES(?,?,?,?)', (identity, 1, definition.model_dump_json(), now))
         return self.get(identity)
 
@@ -130,7 +182,7 @@ class WorkflowRepository:
         definition = self._validated(definition, confirmed)
         with self.connection() as db:
             db.execute('BEGIN IMMEDIATE')
-            row = db.execute('SELECT w.site_key,MAX(v.version) AS version FROM workflows w JOIN workflow_versions v ON w.id=v.flow_id WHERE w.id=? GROUP BY w.id', (flow_id,)).fetchone()
+            row = db.execute('SELECT w.site_key,MAX(v.version) AS version FROM workflows w JOIN workflow_versions v ON w.id=v.flow_id WHERE w.id=? AND w.deleted_at IS NULL GROUP BY w.id', (flow_id,)).fetchone()
             if not row:
                 raise KeyError(flow_id)
             if row['site_key'] != definition.site_key:
@@ -142,6 +194,8 @@ class WorkflowRepository:
 
     def get(self, flow_id, version=None):
         with self.connection() as db:
+            if not db.execute('SELECT id FROM workflows WHERE id=? AND deleted_at IS NULL', (flow_id,)).fetchone():
+                raise KeyError(flow_id)
             if version is None:
                 row = db.execute('SELECT * FROM workflow_versions WHERE flow_id=? ORDER BY version DESC LIMIT 1', (flow_id,)).fetchone()
             else:
@@ -153,6 +207,21 @@ class WorkflowRepository:
 
     def list(self):
         with self.connection() as db:
-            ids = [r[0] for r in db.execute('SELECT id FROM workflows ORDER BY created_at DESC')]
+            ids = [r[0] for r in db.execute('SELECT id FROM workflows WHERE deleted_at IS NULL ORDER BY created_at DESC')]
         return [{'id': record['id'], 'version': record['version'], 'name': record['definition']['name'],
                  'site_key': record['definition']['site_key']} for record in (self.get(identity) for identity in ids)]
+
+    def delete(self, identity, expected_version):
+        from ..sessions import BusyError
+        with self.connection() as db:
+            db.execute('BEGIN IMMEDIATE')
+            row = db.execute('SELECT id FROM workflows WHERE id=? AND deleted_at IS NULL', (identity,)).fetchone()
+            if not row:
+                raise KeyError(identity)
+            latest = db.execute('SELECT MAX(version) FROM workflow_versions WHERE flow_id=?', (identity,)).fetchone()[0]
+            if latest != expected_version:
+                raise VersionConflict('流程已有更新，请重新打开后确认删除全部版本')
+            if db.execute("SELECT 1 FROM sqlite_master WHERE type='table' AND name='tasks'").fetchone():
+                if db.execute("SELECT 1 FROM tasks WHERE flow_id=? AND status NOT IN ('completed','failed','stopped','interrupted') LIMIT 1", (identity,)).fetchone():
+                    raise BusyError('流程仍有未结束任务，请先停止任务')
+            db.execute('UPDATE workflows SET deleted_at=? WHERE id=?', (datetime.now(timezone.utc).isoformat(), identity))

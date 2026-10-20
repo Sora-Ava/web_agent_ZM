@@ -5,12 +5,13 @@ async def browser_alive(session):
     return bool(session.page and not session.page.is_closed() and session.browser and session.browser.is_connected())
 
 
-async def login_page(session):
+async def login_page(session, spec=None):
+    if spec:
+        from ..login import LoginController
+        return await LoginController(session).is_login_page(spec)
     try:
-        username = session.page.locator(session.settings.login_username_selector)
-        password = session.page.locator(session.settings.login_password_selector)
-        return (await username.count() == 1 and await password.count() == 1
-                and await username.is_visible() and await password.is_visible())
+        fields = session.page.locator('input[type=password]')
+        return any([await fields.nth(i).is_visible() for i in range(await fields.count())])
     except Exception:
         return False
 

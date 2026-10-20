@@ -11,13 +11,14 @@ from .config import ROOT, Settings
 from .demo import demo_app
 from .events import CommandRunner, EventBus
 from .sessions import BrowserSession
-from .workflows.models import site_key
 from .workflows.repository import WorkflowRepository
 from .workflows.routes import router as workflow_router
 from .workflows.service import WorkflowRunService
 from .tasks.repository import TaskRepository
 from .tasks.service import TaskService
 from .tasks.routes import router as tasks_router
+from .diagnostics import router as diagnostics_router
+from .login_routes import router as login_router
 
 
 def create_app(settings=None, session=None):
@@ -43,11 +44,14 @@ def create_app(settings=None, session=None):
             await session.close()
 
     app = FastAPI(title='Web Agent ZM', lifespan=lifespan)
+    from fastapi.exceptions import RequestValidationError
+    @app.exception_handler(RequestValidationError)
+    async def safe_validation(request, exc):
+        return JSONResponse(status_code=422,content={'detail':[{'loc':list(e['loc']),'msg':'输入格式不正确','type':e['type']} for e in exc.errors()]})
     app.state.settings = settings
     app.state.session = session
     app.state.bus = EventBus()
-    app.state.repository = WorkflowRepository(settings.database_path, site_key(settings.site_url),
-        secrets=[settings.site_password.get_secret_value(), settings.llm_api_key.get_secret_value()])
+    app.state.repository = WorkflowRepository(settings.database_path, secrets=[settings.llm_api_key.get_secret_value(), *[secret.get_secret_value() for secret in settings.credentials.secrets()]], credentials=settings.credentials)
     app.state.runner = CommandRunner(session, app.state.bus, app.state.repository)
     app.state.tasks = TaskService(session, TaskRepository(app.state.repository), app.state.bus, app.state.runner)
     session.downloads.bind_repository(app.state.tasks.repository)
@@ -70,6 +74,8 @@ def create_app(settings=None, session=None):
     app.include_router(router)
     app.include_router(workflow_router)
     app.include_router(tasks_router)
+    app.include_router(diagnostics_router)
+    app.include_router(login_router)
     app.include_router(demo_app.router)
     dist = ROOT / 'frontend' / 'dist'
     if dist.is_dir():

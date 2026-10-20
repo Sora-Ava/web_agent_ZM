@@ -4,6 +4,8 @@ from pydantic import BaseModel, Field
 
 from ..contracts import BrowserAction
 from .models import WorkflowDefinition, site_key, validate_parameters
+from ..login import LoginController
+import time
 from ..tasks.control import TaskStopped
 from ..recovery.agent import RecoveryAgent
 from ..recovery.runtime import RecoveryRuntime, FatalRecovery
@@ -25,13 +27,6 @@ class WorkflowExecutor:
         self.session = session
         self.recovery = recovery if recovery is not None else RecoveryAgent(session.settings)
 
-    async def _logged_in(self):
-        session = self.session
-        if site_key(session.page.url) != site_key(session.settings.site_url):
-            return False
-        locator = session.page.locator(session.settings.logged_in_selector)
-        return await locator.count() == 1 and await locator.is_visible()
-
     async def execute(self, definition: WorkflowDefinition, values: dict[str, str], emit=None, checkpoint=None, overrides=None) -> RunResult:
         steps, file_ids = [], []
         overrides = overrides if overrides is not None else {}
@@ -46,25 +41,18 @@ class WorkflowExecutor:
             return RunResult(steps=steps, file_ids=file_ids, model_calls=runtime.calls if runtime else 0,
                 repairs=runtime.repairs if runtime else [], **kwargs)
         async def failure(message):
-            fatal = started and (not await browser_alive(self.session) or await login_page(self.session))
+            fatal = started and (not await browser_alive(self.session) or await login_page(self.session, runtime.login_spec if runtime else None))
             return result(status='failed', message=message, fatal=fatal)
         try:
             definition = WorkflowDefinition.model_validate(definition.model_dump())
-            values = validate_parameters(definition, values)
-            if definition.site_key != site_key(self.session.settings.site_url):
-                raise ValueError('当前网站与流程所属系统不一致，请检查 SITE_URL')
+            values = validate_parameters(definition, values, self.session.settings.credentials)
             if checkpoint:
                 await checkpoint()
             started = True
             await self.session.start()
-            await self.session.page.goto(definition.entry_url, wait_until='domcontentloaded')
-            if not await self._logged_in():
-                login = await self.session.login()
-                if login.status != 'success':
-                    raise FatalRecovery('登录失败，请检查配置后重新启动队列')
+            self.session.flow_scope = definition.site_key
+            if not definition.steps[0].login:
                 await self.session.page.goto(definition.entry_url, wait_until='domcontentloaded')
-                if not await self._logged_in():
-                    raise FatalRecovery('重新登录后流程入口仍未登录，已停止后续派发')
             self.session.status = 'ready'
             def bind(step):
                 data = step.action.model_dump()
@@ -73,15 +61,18 @@ class WorkflowExecutor:
                 if step.id in overrides:
                     data['target'] = overrides[step.id].model_dump()
                 if step.action.kind == 'download':
-                    data['name_parts'] = ([definition.name] + [f'{p.label}-{values[p.key]}' for p in definition.parameters])[:6]
+                    data['name_parts'] = ([definition.name] + [f'{p.label}-{values[p.key]}' for p in definition.parameters if p.kind not in ('credential', 'url')])[:6]
                 return BrowserAction.model_validate(data)
             async def restore(index):
                 if any(s.action and s.action.kind == 'download' for s in definition.steps[:index]):
                     return False
-                await self.session.page.goto(definition.entry_url, wait_until='domcontentloaded')
+                if not definition.steps[0].login:
+                    await self.session.page.goto(definition.entry_url, wait_until='domcontentloaded')
                 for previous in definition.steps[:index]:
                     if checkpoint:
                         await checkpoint()
+                    if previous.login:
+                        continue
                     if previous.condition:
                         locator = self.session.locator(previous.condition.target)
                         count = await locator.count()
@@ -97,12 +88,26 @@ class WorkflowExecutor:
                     if restored.status != 'success':
                         return False
                 return True
-            runtime = RecoveryRuntime(self.session, self.recovery, overrides, emit, checkpoint, restore)
+            runtime = RecoveryRuntime(self.session, self.recovery, overrides, emit, checkpoint, restore, values=values, scope=definition.site_key)
             for index, step in enumerate(definition.steps):
                 if checkpoint:
                     await checkpoint()
                 outcome = 'continue'
-                if step.condition:
+                if step.login:
+                    login_started = time.monotonic()
+                    executed = await LoginController(self.session).execute(step.login, values, definition.site_key)
+                    result_data = executed.model_dump()
+                    result_data['elapsed_s'] = round(time.monotonic()-login_started, 3)
+                    if executed.status == 'success':
+                        runtime.login_spec = step.login
+                        # Login may finish at a home page. Business entry is explicit
+                        # in the following navigation step, not hidden here.
+                    else:
+                        record = {'id':step.id,'name':step.name,'index':index,'total':len(definition.steps),'result':result_data}
+                        steps.append(record)
+                        if emit: await emit({'type':'workflow_step',**record})
+                        raise FatalRecovery('登录步骤失败：'+executed.message)
+                elif step.condition:
                     locator = self.session.locator(step.condition.target)
                     count = await locator.count()
                     if count > 1:

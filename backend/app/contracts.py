@@ -18,9 +18,9 @@ class LocatorSpec(BaseModel):
 
 class BrowserAction(BaseModel):
     model_config = ConfigDict(extra='forbid')
-    kind: Literal['navigate', 'click', 'fill', 'select', 'wait', 'download']
+    kind: Literal['navigate', 'click', 'fill', 'select', 'wait', 'download', 'press']
     target: LocatorSpec | None = None
-    value: str | None = Field(default=None, max_length=4000, description='For fill: text to enter. For select: option value. For navigate: URL. Otherwise omit.')
+    value: str | None = Field(default=None, max_length=4000, description='For fill: text. For select: option value. For navigate: full HTTP(S) URL. For press: Enter (submit search/form). Otherwise omit.')
     wait_for_query: bool = Field(default=False, description='True only when clicking the submit query button to load results. False for navigation into a business/query page and for all fill/select actions.')
     name_parts: list[str] = Field(default_factory=list, max_length=6, description='Download filename parts such as batch number and material level. Only used for download; otherwise omit.')
 
@@ -28,8 +28,10 @@ class BrowserAction(BaseModel):
     def check_action(self):
         if self.kind != 'navigate' and self.target is None:
             raise ValueError('target required')
-        if self.kind in ('navigate', 'fill', 'select') and self.value is None:
+        if self.kind in ('navigate', 'fill', 'select', 'press') and self.value is None:
             raise ValueError('value required')
+        if self.kind == 'press' and self.value != 'Enter':
+            raise ValueError('press only supports Enter')
         return self
 
 
@@ -49,3 +51,7 @@ class PageObservation(BaseModel):
 class SessionState(BaseModel):
     status: Literal['idle', 'starting', 'ready', 'running', 'failed', 'closed']
     current_url: str | None = None
+
+
+class DeleteConfirmed(BaseModel):
+    confirmed: Literal[True]

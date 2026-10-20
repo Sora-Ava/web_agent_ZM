@@ -25,7 +25,7 @@ class ParameterSuggester:
 
     async def suggest(self, definition: WorkflowDefinition):
         c = self.settings
-        if not definition.parameters or not c.llm_base_url or not c.llm_model:
+        if not definition.parameters or any(p.kind in ('url','credential') for p in definition.parameters) or not c.llm_base_url or not c.llm_model:
             return definition, 0
         client = self.client or httpx.AsyncClient(timeout=min(c.model_timeout_s, 20))
         schema = {'type': 'object', 'properties': {'parameters': {'type': 'array', 'items': {'type': 'object',
