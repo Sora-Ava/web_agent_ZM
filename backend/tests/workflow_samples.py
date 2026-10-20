@@ -14,3 +14,11 @@ def sample_workflow(url, name='生产导出'):
             {'id': 'empty', 'name': '暂无数据判断', 'condition': {'target': {'kind': 'text', 'value': '暂无数据'}, 'when_true': 'no_data', 'when_false': 'continue'}},
             {'id': 'export', 'name': '导出', 'action': {'kind': 'download', 'target': {'kind': 'role', 'role': 'button', 'value': '导出'}}},
         ]})
+
+
+def sample_with_login(url, name='生产导出'):
+    from app.workflows.models import WorkflowStep,LoginSpec
+    definition=sample_workflow(url,name)
+    definition.steps.insert(0,WorkflowStep(id='login',name='显式登录',login=LoginSpec(url=url+'/demo/login',credential_ref='test',username={'kind':'css','value':'#username'},password={'kind':'css','value':'#password'},submit={'kind':'css','value':'#login'},success={'kind':'css','value':'#logged-in'})))
+    definition.steps.insert(1,WorkflowStep(id='home',name='进入业务首页',action={'kind':'navigate','value':url+'/demo/home'}))
+    return definition

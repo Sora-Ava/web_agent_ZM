@@ -4,7 +4,8 @@ import pytest
 from app.contracts import ActionResult, LocatorSpec
 from app.workflows.executor import WorkflowExecutor
 from app.tasks.control import TaskStopped
-from workflow_samples import sample_workflow
+from workflow_samples import sample_workflow, sample_with_login
+from app.login import LoginController
 
 
 class Proposer:
@@ -67,10 +68,10 @@ async def test_saved_download_evidence_prevents_duplicate_export(session, monkey
 @pytest.mark.parametrize('expire_kind', ['query', 'download'])
 async def test_login_expiry_rebuilds_query_without_model(session, monkeypatch, expire_kind):
     original, expired, logins = session.execute, [], []
-    login = session.login
-    async def relogin():
-        logins.append(1)
-        return await login()
+    login = LoginController.execute
+    async def relogin(self, *args, **kwargs):
+        if kwargs.get('force'): logins.append(1)
+        return await login(self, *args, **kwargs)
     async def execute(action):
         if ((expire_kind == 'query' and action.wait_for_query) or (expire_kind == 'download' and action.kind == 'download')) and not expired:
             expired.append(1)
@@ -79,9 +80,9 @@ async def test_login_expiry_rebuilds_query_without_model(session, monkeypatch, e
             return ActionResult(status='failed', message='会话已过期')
         return await original(action)
     monkeypatch.setattr(session, 'execute', execute)
-    monkeypatch.setattr(session, 'login', relogin)
+    monkeypatch.setattr(LoginController, 'execute', relogin)
     agent = Proposer()
-    result = await WorkflowExecutor(session, recovery=agent).execute(sample_workflow(session.settings.site_url.split('/demo')[0]), {'batch': 'EXPIRE', 'level': '2'})
+    result = await WorkflowExecutor(session, recovery=agent).execute(sample_with_login(session.settings.site_url.split('/demo')[0]), {'batch': 'EXPIRE', 'level': '2'})
     assert result.status == 'success' and len(logins) == 1 and agent.calls == 0
     assert 'EXPIRE,2,120' in session.downloads.get(result.file_ids[0]).path.read_text(encoding='utf-8-sig')
 
@@ -112,12 +113,12 @@ async def test_failed_relogin_is_fatal_and_does_not_use_llm(session, monkeypatch
         await session.context.clear_cookies()
         await session.page.goto(session.settings.site_url)
         return ActionResult(status='failed', message='过期')
-    async def login():
+    async def login(self, *args, **kwargs):
         return ActionResult(status='failed', message='登录失败')
     monkeypatch.setattr(session, 'execute', fail)
-    monkeypatch.setattr(session, 'login', login)
+    monkeypatch.setattr(LoginController, 'execute', login)
     agent = Proposer()
-    result = await WorkflowExecutor(session, recovery=agent).execute(sample_workflow(session.settings.site_url.split('/demo')[0]), {'batch': 'FAIL', 'level': '1'})
+    result = await WorkflowExecutor(session, recovery=agent).execute(sample_with_login(session.settings.site_url.split('/demo')[0]), {'batch': 'FAIL', 'level': '1'})
     assert result.status == 'failed' and result.fatal and agent.calls == 0
 
 

@@ -80,7 +80,8 @@ async def test_query_immediate_clear_cannot_finish_before_loading_cycle(session)
 
 async def test_browser_failure_is_logged_without_configured_secret(session, caplog):
     from pydantic import SecretStr
-    session.settings.site_password = SecretStr('SYNTHETIC_DIAGNOSTIC_SECRET')
+    from conftest import set_secret
+    set_secret(session.settings, 'SYNTHETIC_DIAGNOSTIC_SECRET')
     result = await session.execute(BrowserAction(kind='click', target=LocatorSpec(kind='css', value='[SYNTHETIC_DIAGNOSTIC_SECRET(')))
     assert result.status == 'failed'
     assert caplog.records

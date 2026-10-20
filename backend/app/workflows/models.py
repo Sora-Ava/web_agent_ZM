@@ -33,7 +33,7 @@ class StrictModel(BaseModel):
 class WorkflowParameter(StrictModel):
     key: str = Field(pattern=r'^[a-zA-Z_][a-zA-Z0-9_]{0,63}$')
     label: str = Field(min_length=1, max_length=80)
-    kind: Literal['text', 'number'] = 'text'
+    kind: Literal['text', 'number', 'url', 'credential'] = 'text'
     required: bool = True
     default: str | None = Field(default=None, max_length=4000)
 
@@ -45,23 +45,45 @@ class ConditionSpec(StrictModel):
     when_false: Literal['continue', 'no_data', 'finish'] = 'continue'
 
 
+class LoginSpec(StrictModel):
+    url: str = Field(min_length=1, max_length=2000)
+    url_parameter: str | None = None
+    credential_ref: str | None = Field(default=None, max_length=80)
+    credential_parameter: str | None = None
+    username: LocatorSpec
+    password: LocatorSpec
+    submit: LocatorSpec
+    success: LocatorSpec
+    reuse: bool = True
+
+    @model_validator(mode='after')
+    def check_login(self):
+        if clean_entry_url(self.url) != self.url:
+            raise ValueError('登录网址不能包含认证字段')
+        if bool(self.credential_ref) == bool(self.credential_parameter):
+            raise ValueError('登录必须选择固定凭据或凭据参数之一')
+        return self
+
+
 class WorkflowStep(StrictModel):
     id: str = Field(min_length=1, max_length=80)
     name: str = Field(min_length=1, max_length=120)
     action: BrowserAction | None = None
     value_parameter: str | None = None
     condition: ConditionSpec | None = None
+    login: LoginSpec | None = None
 
     @model_validator(mode='after')
     def check_step(self):
-        if (self.action is None) == (self.condition is None):
-            raise ValueError('步骤必须是操作或条件之一')
+        if sum(x is not None for x in (self.action, self.condition, self.login)) != 1:
+            raise ValueError('步骤必须是操作、条件或登录之一')
         if self.value_parameter and (not self.action or self.action.kind not in ('fill', 'select')):
             raise ValueError('参数只能绑定输入或选择步骤')
         return self
 
 
 class WorkflowDefinition(StrictModel):
+    schema_version: Literal[2] = 2
     name: str = Field(min_length=1, max_length=80)
     site_key: str
     entry_url: str = Field(min_length=1, max_length=2000)
@@ -83,10 +105,19 @@ class WorkflowDefinition(StrictModel):
             if step.action and step.action.kind == 'navigate':
                 if site_key(step.action.value) != self.site_key or clean_entry_url(step.action.value) != step.action.value:
                     raise ValueError('导航必须属于当前系统且不能携带认证字段')
+            kinds = {p.key: p.kind for p in self.parameters}
+            if step.value_parameter and kinds[step.value_parameter] in ('credential', 'url'):
+                raise ValueError('凭据和网址参数只能绑定登录配置')
+            if step.login:
+                if site_key(step.login.url) != self.site_key:
+                    raise ValueError('登录网址必须属于流程来源')
+                for key, kind in ((step.login.url_parameter, 'url'), (step.login.credential_parameter, 'credential')):
+                    if key and kinds.get(key) != kind:
+                        raise ValueError('登录参数引用类型不匹配')
         return self
 
 
-def validate_parameters(definition: WorkflowDefinition, values: dict[str, str]) -> dict[str, str]:
+def validate_parameters(definition: WorkflowDefinition, values: dict[str, str], credentials=None) -> dict[str, str]:
     allowed = {p.key for p in definition.parameters}
     if set(values) - allowed:
         raise ValueError('包含未知参数')
@@ -103,5 +134,14 @@ def validate_parameters(definition: WorkflowDefinition, values: dict[str, str]) 
                     raise InvalidOperation()
             except InvalidOperation:
                 raise ValueError(f'“{parameter.label}”必须为有效数值')
+        if parameter.kind == 'url' and value:
+            if site_key(value) != definition.site_key or clean_entry_url(value) != value:
+                raise ValueError('网址参数必须属于流程来源且不能携带认证字段')
+        if parameter.kind == 'credential' and credentials is not None:
+            credentials.resolve(value, definition.site_key)
         resolved[parameter.key] = value
+    if credentials is not None:
+        for step in definition.steps:
+            if step.login:
+                credentials.resolve(resolved.get(step.login.credential_parameter) if step.login.credential_parameter else step.login.credential_ref, definition.site_key)
     return resolved

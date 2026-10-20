@@ -12,6 +12,9 @@ import uvicorn
 from playwright.async_api import async_playwright, expect
 
 from app.agent import StepAgent
+from pydantic import SecretStr
+from app.login import LoginController
+from app.workflows.models import LoginSpec
 from app.config import ROOT, Settings
 from app.main import create_app
 from app.recovery.agent import RecoveryAgent
@@ -27,6 +30,7 @@ def local_app(tmp_path, request):
     url = f'http://127.0.0.1:{port}'
     settings = Settings(_env_file=None, site_url=url + '/demo/login', download_dir=tmp_path, database_path=tmp_path / 'agent.sqlite3',
                         frontend_origin=url, action_timeout_ms=3000, query_timeout_ms=5000, download_timeout_ms=5000, llm_base_url='http://fixture-model/v1', llm_model='fixture')
+    settings.credentials_json=SecretStr(json.dumps({'test':{'origin':url,'username':'operator','password':'demo-password'}}))
     app = create_app(settings)
     requests = []
     @app.get('/fixture-search')
@@ -36,7 +40,7 @@ def local_app(tmp_path, request):
         return HTMLResponse('<h1>'+escape(q or '测试搜索')+'</h1><form><label>搜索内容<input type="search" name="q"></label><button>搜索</button></form>')
     @app.post("/fixture-login")
     async def fixture_login():
-        return (await app.state.session.login()).model_dump()
+        return (await LoginController(app.state.session).execute(LoginSpec(url=url+'/demo/login',credential_ref='test',username={'kind':'css','value':'#username'},password={'kind':'css','value':'#password'},submit={'kind':'css','value':'#login'},success={'kind':'css','value':'#logged-in'}),{},url)).model_dump()
     fixtures = app.router.routes[-2:]
     del app.router.routes[-2:]
     app.router.routes[0:0] = fixtures
