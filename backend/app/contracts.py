@@ -50,6 +50,7 @@ class PageObservation(BaseModel):
 
 
 class SessionState(BaseModel):
+    control_mode: Literal['agent', 'requesting', 'manual'] = 'agent'
     status: Literal['idle', 'starting', 'ready', 'running', 'failed', 'closed']
     current_url: str | None = None
 

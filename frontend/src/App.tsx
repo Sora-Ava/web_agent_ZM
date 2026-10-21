@@ -32,6 +32,7 @@ export default function App(){
  const [deleting,setDeleting]=useState<DeleteTarget|null>(null);
  const [error,setError]=useState('');
  const [pending,setPending]=useState(false);
+ const [controlPending,setControlPending]=useState(false);
  const [connected,setConnected]=useState(false);
  const refreshId=useRef(0);
  const selectId=useRef(0);
@@ -57,7 +58,14 @@ export default function App(){
   void api<TaskRecord>('/tasks/'+taskId).then(record=>{if(request===taskRequest.current)setTaskRecord(record);}).catch(e=>{if(request===taskRequest.current)setError((e as Error).message);});
  },[taskId,snapshot.tasks]);
  const status=snapshot.session.status;
- const busy=status==='running'||status==='starting'||pending;
+ const controlMode=snapshot.session.control_mode||'agent';
+ const busy=status==='running'||status==='starting'||pending||controlMode!=='agent';
+ useEffect(()=>{if(controlMode==='agent')return;const timer=setInterval(()=>void refresh(),1000);return()=>clearInterval(timer);},[controlMode,refresh]);
+ async function switchControl(){
+  setControlPending(true);setError('');
+  try{setSnapshot(await api<Snapshot>('/session/'+(controlMode==='manual'?'return-control':'takeover'),{method:'POST'}));}
+  catch(e){setError((e as Error).message);}finally{setControlPending(false);}
+ }
  const active=['ready','running'].includes(status);
  async function lifecycle(start:boolean){
   setPending(true);setError('');
@@ -144,7 +152,7 @@ export default function App(){
    {!selected&&!history&&<div className="recording-toolbar"><span>{snapshot.recording?.warnings.length?snapshot.recording.warnings[snapshot.recording.warnings.length-1]:`已记录 ${recordingCount} 个成功操作`}</span><div><button className="secondary" disabled={busy} onClick={()=>void newRecording()}><Plus size={14}/>新建录制</button><button className="primary" disabled={busy||!recordingCount} onClick={()=>void prepareSave()}><Save size={14}/>保存为标准流程</button></div></div>}
    <div className="workspace-grid">
     {history?<TaskPanel key={taskId||'history'} task={taskRecord} tasks={snapshot.tasks||[]} onChoose={id=>openHistory(id)} onControl={controlTask} onDelete={task=>setDeleting({type:'task',id:task.id,name:task.name})}/>:selected&&batchMode?<BatchPanel record={selected} onSubmit={submitBatch}/>:selected?<WorkflowRunPanel record={selected} run={snapshot.run||null} busy={busy} onRun={run} onVersion={version=>void chooseFlow(selected.id,version)} onEdit={()=>setEditor({record:selected,proposal:{definition:selected.definition,warnings:[],suggestion_source:'recording',model_calls:0}})}/>:<CommandPanel commands={snapshot.commands} busy={busy} ready={status==='ready'} onSend={send}/>}
-    <div className="right-column"><BrowserView url={snapshot.session.current_url} active={active}/><FileList files={snapshot.files} onDelete={file=>setDeleting({type:'file',id:file.id,name:file.name})}/></div>
+    <div className="right-column"><BrowserView url={snapshot.session.current_url} active={active} controlMode={controlMode} controlPending={controlPending||!connected} onControl={()=>void switchControl()}/><FileList files={snapshot.files} onDelete={file=>setDeleting({type:'file',id:file.id,name:file.name})}/></div>
    </div>
    <footer className="page-footer"><span><Terminal size={13}/>结构化工具执行 · Playwright</span><span>{metrics.length?`编排累计 ${metrics.reduce((sum,e)=>sum+(e.model_calls||0),0)} 次模型请求`:'正常执行无需模型请求'}</span></footer>
   </div></main>

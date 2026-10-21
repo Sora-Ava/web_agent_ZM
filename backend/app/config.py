@@ -21,7 +21,7 @@ class Settings(BaseSettings):
     credentials_json: SecretStr = SecretStr('{}')
     download_dir: Path = ROOT / 'downloads'
     database_path: Path = ROOT / 'data' / 'agent-v2.sqlite3'
-    headless: bool = True
+    headless: bool = False
     action_timeout_ms: int = Field(default=30000, ge=100, le=120000)
     download_timeout_ms: int = Field(default=60000, ge=100, le=300000)
     query_timeout_ms: int = Field(default=30000, ge=100, le=120000)

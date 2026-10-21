@@ -27,22 +27,56 @@ class BrowserSession(BrowserOperations):
         self.authenticated = {}
         self.flow_scope = None
         self._lifecycle = asyncio.Lock()
+        self.control_mode = 'agent'
+        self.control_revision = 0
+        self.control_listener = None
+        self._agent_turn = asyncio.Event()
+        self._agent_turn.set()
 
     def state(self) -> SessionState:
         url = self.page.url if self.page and not self.page.is_closed() else None
-        return SessionState(status='running' if self.busy else self.status, current_url=url)
+        return SessionState(status='running' if self.busy else self.status, current_url=url, control_mode=self.control_mode)
 
     @asynccontextmanager
-    async def reserve(self):
-        if self.busy:
+    async def reserve(self, *, allow_manual=False):
+        if self.busy or (not allow_manual and self.control_mode != 'agent'):
             raise BusyError('浏览器正在执行操作')
         self.busy = True
         try:
             yield
         finally:
             self.busy = False
+            await self.manual_checkpoint(wait=False)
 
-    async def start(self) -> SessionState:
+    async def notify_control(self):
+        if self.control_listener:
+            await self.control_listener({'type': 'browser_control', 'mode': self.control_mode})
+
+    async def request_takeover(self):
+        self.require_page()
+        if self.control_mode == 'agent':
+            self._agent_turn.clear()
+            self.control_mode = 'requesting' if self.busy else 'manual'
+            await self.notify_control()
+
+    async def manual_checkpoint(self, *, wait=True):
+        if self.control_mode == 'requesting':
+            self.control_mode = 'manual'
+            await self.notify_control()
+        if wait:
+            await self._agent_turn.wait()
+
+    async def return_control(self):
+        if self.control_mode == 'requesting':
+            raise BusyError('请等待当前操作结束，人工接管生效后再交还')
+        if self.control_mode == 'manual':
+            self.control_revision += 1
+            self.authenticated.clear()  # Manual browsing may change the signed-in account.
+            self.control_mode = 'agent'
+            self._agent_turn.set()
+            await self.notify_control()
+
+    async def start(self, *, visible=False) -> SessionState:
         async with self._lifecycle:
             if self.page and not self.page.is_closed():
                 return self.state()
@@ -50,7 +84,7 @@ class BrowserSession(BrowserOperations):
             try:
                 await self._dispose()
                 self.playwright = await async_playwright().start()
-                self.browser = await self.playwright.chromium.launch(headless=self.settings.headless)
+                self.browser = await self.playwright.chromium.launch(headless=False if visible else self.settings.headless)
                 self.context = await self.browser.new_context(accept_downloads=True, viewport={'width': 1280, 'height': 800})
                 self.page = await self.context.new_page()
                 self.page.set_default_timeout(self.settings.action_timeout_ms)
@@ -62,6 +96,8 @@ class BrowserSession(BrowserOperations):
         return self.state()
 
     async def _dispose(self):
+        self.control_mode = 'agent'
+        self._agent_turn.set()
         self.authenticated.clear()
         self.flow_scope = None
         browser, playwright = self.browser, self.playwright
