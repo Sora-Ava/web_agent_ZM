@@ -40,6 +40,7 @@ class ActionResult(BaseModel):
     message: str
     file_id: str | None = None
     effect_started: bool = False
+    scope_violation: bool = False
 
 
 class PageObservation(BaseModel):

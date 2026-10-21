@@ -30,6 +30,8 @@ class RecoveryRuntime:
     async def execute(self, action, step, index, total):
         before = await snapshot(self.session)
         result = await self.session.execute(action)
+        if result.scope_violation:
+            return result
         if result.status == 'success':
             return result
         await self.boundary()
@@ -61,6 +63,8 @@ class RecoveryRuntime:
             await self.boundary()
             before = await snapshot(self.session)
             result = await self.session.execute(action)
+            if result.scope_violation:
+                return result
             if result.status == 'success':
                 return result
             evidence = await completed(self.session, action, before)
@@ -98,6 +102,8 @@ class RecoveryRuntime:
             candidate = action.model_copy(update={'target': target}, deep=True)
             before = await snapshot(self.session)
             result = await self.session.execute(candidate)
+            if result.scope_violation:
+                return result
             await self.boundary()
             evidence = await completed(self.session, candidate, before) if result.status != 'success' else None
             if evidence:

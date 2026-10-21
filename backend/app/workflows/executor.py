@@ -52,7 +52,7 @@ class WorkflowExecutor:
             await self.session.start()
             self.session.flow_scope = definition.site_key
             if not definition.steps[0].login:
-                await self.session.page.goto(definition.entry_url, wait_until='domcontentloaded')
+                await self.session.navigate_flow_entry(definition.entry_url)
             self.session.status = 'ready'
             def bind(step):
                 data = step.action.model_dump()
@@ -67,7 +67,7 @@ class WorkflowExecutor:
                 if any(s.action and s.action.kind == 'download' for s in definition.steps[:index]):
                     return False
                 if not definition.steps[0].login:
-                    await self.session.page.goto(definition.entry_url, wait_until='domcontentloaded')
+                    await self.session.navigate_flow_entry(definition.entry_url)
                 for previous in definition.steps[:index]:
                     if checkpoint:
                         await checkpoint()

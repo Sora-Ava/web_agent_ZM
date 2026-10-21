@@ -44,7 +44,6 @@ class LoginController:
                     raise ValueError('当前账号会话无法确认，请先关闭浏览器并重新启动后切换账号')
                 if spec.reuse and not force:
                     return ActionResult(status='success', message='复用已验证登录会话')
-            s.authenticated.pop(scope, None)
             async def guard(route):
                 request = route.request
                 if request.is_navigation_request() and request.frame == s.page.main_frame:
@@ -60,6 +59,8 @@ class LoginController:
                 if credential_origin(s.page.url) != scope:
                     raise ValueError('登录页面跳转到其他来源，未填写凭据')
                 if await success():
+                    if s.authenticated.get(scope) == ref:
+                        return ActionResult(status='success', message='复用已验证登录会话')
                     raise ValueError('当前已有未知账号会话，请先关闭浏览器并重新启动后切换账号')
                 fields = [s.locator(x) for x in (spec.username, spec.password, spec.submit)]
                 for field in fields:
@@ -68,6 +69,8 @@ class LoginController:
                     await field.wait_for(state='visible')
                 if not await fields[1].evaluate('(el)=>el.matches("input[type=password]")'):
                     raise ValueError('密码目标必须是密码输入框')
+                # A fresh credential attempt invalidates the previous identity.
+                s.authenticated.pop(scope, None)
                 # Check origin in the same JS turn that writes each secret, avoiding
                 # a check/fill navigation race. No model-supplied code is evaluated.
                 for field, secret in zip(fields[:2], (credential.username, credential.password)):
