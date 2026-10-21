@@ -1,0 +1,11 @@
+export type Locator = {kind:'role'|'label'|'text'|'css';value:string;role:string|null};
+export type Action = {kind:'navigate'|'click'|'fill'|'select'|'wait'|'download'|'press';target:Locator|null;value:string|null;wait_for_query:boolean;name_parts:string[]};
+export type Parameter = {key:string;label:string;kind:'text'|'number'|'url'|'credential';required:boolean;default:string|null};
+export type Condition = {target:Locator;state:'visible'|'hidden';when_true:'continue'|'no_data'|'finish';when_false:'continue'|'no_data'|'finish'};
+export type LoginSpec = {url:string;url_parameter:string|null;credential_ref:string|null;credential_parameter:string|null;username:Locator;password:Locator;submit:Locator;success:Locator;reuse:boolean};
+export type Step = {id:string;name:string;action:Action|null;value_parameter:string|null;condition:Condition|null;login?:LoginSpec|null};
+export type Definition = {schema_version?:2;name:string;site_key:string;entry_url:string;parameters:Parameter[];steps:Step[]};
+export type WorkflowSummary = {id:string;version:number;name:string;site_key:string};
+export type WorkflowRecord = {id:string;version:number;versions:number[];definition:Definition;created_at:string};
+export type Proposal = {definition:Definition;revision?:string;warnings:string[];suggestion_source:'recording'|'model';model_calls:number};
+export type WorkflowRun = {id:string;flow_id:string;name:string;version:number;parameters:Record<string,string>;status:string;model_calls:number;steps:{id:string;name:string;index:number;total:number;result:{status:string;message:string}}[];result:{status:string;message:string;file_ids:string[];model_calls:number}|null};
