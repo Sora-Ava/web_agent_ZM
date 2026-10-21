@@ -39,7 +39,7 @@ async def start(request: Request):
     try:
         async with session.reserve():
             request.app.state.tasks.authoring = True
-            await session.start()
+            await session.start(visible=True)
             request.app.state.runner.agent.history = []
             session.status = 'ready'
             await request.app.state.bus.publish({'type': 'session', 'message': '浏览器已就绪，请指定要访问的网址'})
@@ -53,11 +53,34 @@ async def start(request: Request):
 @router.delete('/session')
 async def close(request: Request):
     try:
-        async with request.app.state.session.reserve():
+        async with request.app.state.session.reserve(allow_manual=True):
             await request.app.state.session.close()
         return request.app.state.runner.snapshot()
     except BusyError:
         raise HTTPException(409, '浏览器忙碌，请等待当前指令完成')
+
+
+@router.post('/session/takeover')
+async def takeover(request: Request):
+    try:
+        await request.app.state.session.request_takeover()
+        request.app.state.tasks.wake()
+        return request.app.state.runner.snapshot()
+    except ValueError:
+        raise HTTPException(409, '请先启动浏览器')
+
+
+@router.post('/session/return-control')
+async def return_control(request: Request):
+    state = request.app.state
+    try:
+        await state.session.return_control()
+        state.runner.agent.history = []
+        state.repository.warn('人工操作未录制，请检查草稿完整性后再保存标准流程')
+        state.tasks.wake()
+        return state.runner.snapshot()
+    except (BusyError, ValueError) as exc:
+        raise HTTPException(409, str(exc))
 
 
 @router.post('/commands', status_code=202)

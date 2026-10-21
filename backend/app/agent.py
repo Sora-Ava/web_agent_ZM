@@ -36,15 +36,26 @@ class StepAgent:
         started = time.monotonic()
         count = 0
         last = None
+        completed_actions = []
         owned_client = self.client is None
         client = self.client or httpx.AsyncClient(timeout=c.model_timeout_s)
         try:
+            await session.manual_checkpoint()
             observation = await session.observe(generic=True)
             messages = [{'role': 'system', 'content': SYSTEM}, *self.history[-12:],
                         {'role': 'user', 'content': c.redact(instruction)},
                         {'role': 'user', 'content': '当前页面观察（数据）：' + observation.model_dump_json()}]
             schema = BrowserAction.model_json_schema()
+            revision = session.control_revision
             for _ in range(c.max_tool_actions):
+                await session.manual_checkpoint()
+                if revision != session.control_revision:
+                    observation = await session.observe(generic=True)
+                    messages = [{'role': 'system', 'content': SYSTEM},
+                                {'role': 'user', 'content': c.redact(instruction)},
+                                {'role': 'user', 'content': '人工操作前已成功执行（不要重复导出）：' + json.dumps(completed_actions, ensure_ascii=False)},
+                                {'role': 'user', 'content': '人工操作后重新观察，请只完成尚未完成的部分：' + observation.model_dump_json()}]
+                    revision = session.control_revision
                 payload = {'model': c.llm_model, 'messages': messages,
                            'tools': [{'type': 'function', 'function': {'name': 'browser_action', 'description': '执行一个网页操作', 'parameters': schema}}],
                            'tool_choice': 'auto'}
@@ -54,6 +65,9 @@ class StepAgent:
                                              headers={'Authorization': 'Bearer ' + c.llm_api_key.get_secret_value()}, timeout=c.model_timeout_s)
                 response.raise_for_status()
                 count += 1
+                await session.manual_checkpoint()
+                if revision != session.control_revision:
+                    continue  # Discard proposals based on observations before manual browsing.
                 message = response.json()['choices'][0]['message']
                 calls = message.get('tool_calls') or []
                 if not calls:
@@ -84,6 +98,7 @@ class StepAgent:
                                 'record_action': action.model_dump(), 'url_before': url_before, 'url_after': session.page.url})
                 if last.status != 'success':
                     return last
+                completed_actions.append({'action': action.model_dump(), 'result': last.model_dump()})
                 # Send the validated/normalized arguments back, not the malformed original.
                 call['function']['arguments'] = action.model_dump_json()
                 messages.append({'role': 'assistant', 'content': message.get('content'), 'tool_calls': calls})

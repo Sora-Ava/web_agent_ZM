@@ -88,7 +88,8 @@ class TaskService:
                 self.repository.update_task(identity, 'paused')
                 await self.publish()
                 status = 'paused'
-            if status != 'paused':
+            await self.session.manual_checkpoint(wait=False)
+            if status != 'paused' and self.session.control_mode == 'agent':
                 return
             await self.changed.wait()
 
@@ -97,7 +98,7 @@ class TaskService:
             identity = self.repository.next_queued()
             if not identity:
                 return
-            if self.authoring or self.session.busy or self.fault:
+            if self.authoring or self.session.busy or self.fault or self.session.control_mode != 'agent':
                 self.changed.clear()
                 try:
                     await asyncio.wait_for(self.changed.wait(), .2)
@@ -111,6 +112,7 @@ class TaskService:
                 self.repository.update_task(identity, 'running')
                 started = time.monotonic()
                 try:
+                    await self.session.start(visible=True)
                     await self._run(identity)
                 except asyncio.CancelledError:
                     self.repository.update_task(identity, 'interrupted')

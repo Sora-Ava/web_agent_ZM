@@ -35,6 +35,7 @@ async def login(body: LoginInput, request: Request):
         if state.repository.scope and state.repository.scope != site_key(spec.url):
             raise ValueError('来源变化，请先新建录制')
         async with state.session.reserve():
+            await state.session.start(visible=True)
             state.tasks.authoring = True
             result = await LoginController(state.session).execute(spec, {}, spec.url)
             state.session.status = 'ready'
