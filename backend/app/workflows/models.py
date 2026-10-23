@@ -5,6 +5,7 @@ from urllib.parse import parse_qsl, urlencode, urlsplit, urlunsplit
 from pydantic import BaseModel, ConfigDict, Field, model_validator
 
 from ..contracts import BrowserAction, LocatorSpec
+from ..credentials import validate_credential_reference
 
 
 def site_key(url: str) -> str:
@@ -62,6 +63,8 @@ class LoginSpec(StrictModel):
             raise ValueError('登录网址不能包含认证字段')
         if bool(self.credential_ref) == bool(self.credential_parameter):
             raise ValueError('登录必须选择固定凭据或凭据参数之一')
+        if self.credential_ref is not None:
+            validate_credential_reference(self.credential_ref, self.url)
         return self
 
 
@@ -137,11 +140,11 @@ def validate_parameters(definition: WorkflowDefinition, values: dict[str, str], 
         if parameter.kind == 'url' and value:
             if site_key(value) != definition.site_key or clean_entry_url(value) != value:
                 raise ValueError('网址参数必须属于流程来源且不能携带认证字段')
-        if parameter.kind == 'credential' and credentials is not None:
-            credentials.resolve(value, definition.site_key)
+        if parameter.kind == 'credential' and value:
+            validate_credential_reference(value, definition.site_key, credentials)
         resolved[parameter.key] = value
     if credentials is not None:
         for step in definition.steps:
             if step.login:
-                credentials.resolve(resolved.get(step.login.credential_parameter) if step.login.credential_parameter else step.login.credential_ref, definition.site_key)
+                validate_credential_reference(resolved.get(step.login.credential_parameter) if step.login.credential_parameter else step.login.credential_ref, definition.site_key, credentials)
     return resolved

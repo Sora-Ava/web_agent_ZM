@@ -7,6 +7,7 @@ from uuid import uuid4
 
 from ..contracts import BrowserAction
 from ..credentials import secret_variants
+from ..secret_context import contains, data_leaves
 from .models import ConditionSpec, WorkflowDefinition, WorkflowParameter, WorkflowStep, LoginSpec, clean_entry_url, site_key
 
 
@@ -20,7 +21,7 @@ class WorkflowRepository:
         self.path.parent.mkdir(parents=True, exist_ok=True)
         self.scope = scope or ''
         self.credentials = credentials
-        self.secrets = tuple(secret for secret in secrets if secret)
+        self.secrets = secrets if callable(secrets) else tuple(secret for secret in secrets if secret)
         with self.connection() as db:
             db.executescript('''
               CREATE TABLE IF NOT EXISTS drafts(id TEXT PRIMARY KEY, site_key TEXT NOT NULL, active INTEGER NOT NULL, revision INTEGER NOT NULL DEFAULT 0, warnings TEXT NOT NULL DEFAULT '[]');
@@ -36,6 +37,8 @@ class WorkflowRepository:
                 db.execute('INSERT INTO drafts(id,site_key,active) VALUES(?,?,1)', (uuid4().hex, self.scope))
             if 'deleted_at' not in {r[1] for r in db.execute('PRAGMA table_info(workflows)')}:
                 db.execute('ALTER TABLE workflows ADD COLUMN deleted_at TEXT')
+        from .login_recording import LoginRecordingTracker
+        self.login_recording = LoginRecordingTracker(self)
 
     @contextmanager
     def connection(self):
@@ -45,8 +48,11 @@ class WorkflowRepository:
                 yield db
 
     def _no_secrets(self, value):
-        encoded = json.dumps(value, ensure_ascii=False)
-        if any(variant in encoded for secret in self.secrets for variant in secret_variants(secret)):
+        secrets = self.secrets() if callable(self.secrets) else self.secrets
+        raw = [s.get_secret_value() if hasattr(s, 'get_secret_value') else s for s in secrets]
+        candidates = list(data_leaves(value))
+        if any(contains(candidate, variant) for secret in raw if secret
+               for variant in secret_variants(secret) for candidate in candidates):
             raise ValueError('流程内容包含配置凭据，不能保存')
 
     def draft(self):
@@ -121,6 +127,10 @@ class WorkflowRepository:
 
     def proposal(self):
         draft = self.draft()
+        pending = self.login_recording.pending_metadata()
+        if pending:
+            return {'definition': None, 'revision': draft['revision'], 'warnings': draft['warnings'],
+                    'suggestion_source': 'recording', 'model_calls': 0, 'login_confirmation': pending}
         if not draft['steps']:
             raise ValueError('请先成功执行至少一个操作')
         parameters, steps = [], []

@@ -14,11 +14,26 @@ def secret_variants(raw):
 
 
 def credential_origin(url):
-    p = urlsplit(url)
-    if p.scheme not in ('http', 'https') or not p.hostname or p.username is not None or p.password is not None:
-        raise ValueError('凭据来源必须是无账号密码的 HTTP(S) 地址')
-    host = f'[{p.hostname}]' if ':' in p.hostname else p.hostname
-    return f'{p.scheme}://{host}:{p.port or (443 if p.scheme == "https" else 80)}'
+    try:
+        p = urlsplit(url)
+        if p.scheme not in ('http', 'https') or not p.hostname or p.username is not None or p.password is not None:
+            raise ValueError('凭据来源必须是无账号密码的 HTTP(S) 地址')
+        host = f'[{p.hostname}]' if ':' in p.hostname else p.hostname
+        return f'{p.scheme}://{host}:{p.port or (443 if p.scheme == "https" else 80)}'
+    except Exception:
+        raise ValueError('凭据来源必须是无账号密码的 HTTP(S) 地址') from None
+
+
+def validate_credential_reference(name, scope, store=None):
+    """Validate reference shape and known origin without resolving secret material."""
+    if not isinstance(name, str) or not name.strip() or len(name) > 80:
+        raise ValueError('凭据引用必须为 1 至 80 个字符')
+    origin = credential_origin(scope)
+    if store is not None:
+        for item in store.metadata():
+            if item['name'] == name and credential_origin(item['origin']) != origin:
+                raise ValueError('凭据允许来源与流程不一致')
+    return name
 
 
 class Credential(BaseModel):

@@ -41,6 +41,7 @@ class ActionResult(BaseModel):
     file_id: str | None = None
     effect_started: bool = False
     scope_violation: bool = False
+    credential_record: dict | None = Field(default=None, exclude=True, repr=False)
 
 
 class PageObservation(BaseModel):

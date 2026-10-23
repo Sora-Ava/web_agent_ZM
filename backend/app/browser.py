@@ -19,16 +19,18 @@ OBSERVE = r'''() => {
    while(node=walker.nextNode()){if(visible(node.parentElement)){const t=node.textContent.trim();if(t)texts.push(t)}}
    return texts.join(' ');
  }
+ const ids=window.__credentialNodes ||= {nodes:new WeakMap(),next:0,prefix:Date.now().toString(36)+Math.random().toString(36)};
+ function nodeId(el){if(!ids.nodes.has(el))ids.nodes.set(el,ids.prefix+':'+String(++ids.next));return ids.nodes.get(el)}
  const text=safeText(document.body);
  const elements=[];
  for(const el of document.querySelectorAll('button,a,input,textarea,select,[role],[contenteditable="true"]')){
-   if(el.matches('[type=password],[type=hidden]') || el.closest('[hidden],[aria-hidden="true"]') || !el.getClientRects().length || getComputedStyle(el).visibility==='hidden')continue;
+   if(el.matches('[type=hidden]') || el.closest('[hidden],[aria-hidden="true"]') || !el.getClientRects().length || getComputedStyle(el).visibility==='hidden')continue;
    const tag=el.tagName.toLowerCase();
    const label=safeText(el.labels?.[0]);
    const name=el.getAttribute('aria-label') || label || (['input','textarea'].includes(tag)||el.isContentEditable ? el.getAttribute('placeholder')||'' : safeText(el));
-   const role=el.getAttribute('role') || (tag==='input'&&el.type==='search'?'searchbox':({button:'button',a:'link',input:'textbox',textarea:'textbox',select:'combobox'}[tag]));
+   const role=el.type==='password'?null:el.getAttribute('role') || (tag==='input'&&el.type==='search'?'searchbox':({button:'button',a:'link',input:'textbox',textarea:'textbox',select:'combobox'}[tag]));
    const selector=el.id&&document.querySelectorAll('#'+CSS.escape(el.id)).length===1?'#'+CSS.escape(el.id):null;
-   elements.push({role,name:name.slice(0,200),label:label?.slice(0,200),selector,tag,disabled:!!el.disabled});
+   elements.push({node_id:nodeId(el),form_id:nodeId(el.form || document.documentElement),input_type:tag==='input'?el.type:null,role,name:name.slice(0,200),label:label?.slice(0,200),selector,tag,disabled:!!el.disabled});
  }
  return {text:text.slice(0,16000),elements:elements.slice(0,150)};
 }'''

@@ -32,7 +32,22 @@ def local_app(tmp_path, request):
                         frontend_origin=url, action_timeout_ms=3000, query_timeout_ms=5000, download_timeout_ms=5000, llm_base_url='http://fixture-model/v1', llm_model='fixture')
     settings.credentials_json=SecretStr(json.dumps({'test':{'origin':url,'username':'operator','password':'demo-password'}}))
     app = create_app(settings)
-    requests = []
+    class Requests(list):
+        pass
+    requests = Requests()
+    natural = getattr(request, 'param', None) == 'natural'
+    if natural:
+        from fastapi import Request
+        from fastapi.responses import JSONResponse
+        @app.post('/demo/auth')
+        async def natural_auth(request: Request):
+            data = await request.json()
+            if data != {'username':'a', 'password':'synthetic"p\\ss<雪>'}:
+                return JSONResponse({'error':'invalid'}, status_code=401)
+            response = JSONResponse({'ok':True})
+            response.set_cookie('demo_session', 'local-demo', httponly=True)
+            return response
+        app.router.routes.insert(0, app.router.routes.pop())
     @app.get('/fixture-search')
     async def fixture_search(q: str = ''):
         from fastapi.responses import HTMLResponse
@@ -55,7 +70,15 @@ def local_app(tmp_path, request):
         instruction = users[-1]
         completed = sum(m['role'] == 'tool' for m in payload['messages'])
         actions = []
-        if instruction == '访问测试站并搜索黄金价格':
+        if natural and instruction == '打开合成登录页':
+            actions = [{'kind':'navigate','value':url+'/demo/login'}]
+        elif natural and '账号' in instruction:
+            actions = [{'kind':'fill','target':{'kind':'css','value':'#username'},'value':'[REDACTED]'}]
+        elif natural and '密码' in instruction:
+            actions = [{'kind':'fill','target':{'kind':'css','value':'#password'},'value':'[REDACTED]'}]
+        elif natural and instruction == '点击登录':
+            actions = [{'kind':'click','target':{'kind':'css','value':'#login'}}]
+        elif instruction == '访问测试站并搜索黄金价格':
             actions = [{'kind':'navigate','value':url+'/fixture-search'},
                        {'kind':'fill','target':{'kind':'role','role':'searchbox','value':'搜索内容'},'value':'黄金价格'},
                        {'kind':'press','target':{'kind':'role','role':'searchbox','value':'搜索内容'},'value':'Enter'}]
@@ -94,6 +117,11 @@ def local_app(tmp_path, request):
         if time.monotonic() > deadline:
             raise RuntimeError('local app did not start')
         time.sleep(.02)
+    # Acceptance tests can stop the entire app and reopen the same temporary DB.
+    requests.server = server
+    requests.thread = thread
+    requests.settings = settings
+    requests.app = app
     yield url, requests
     server.should_exit = True
     thread.join(timeout=10)

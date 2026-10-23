@@ -25,6 +25,9 @@ class BrowserSession(BrowserOperations):
         self.status = 'idle'
         self.busy = False
         self.authenticated = {}
+        self.credential_binding = None
+        self.credential_authorization = None
+        self.credential_draft_id = None
         self.flow_scope = None
         self._lifecycle = asyncio.Lock()
         self.control_mode = 'agent'
@@ -72,6 +75,8 @@ class BrowserSession(BrowserOperations):
         if self.control_mode == 'manual':
             self.control_revision += 1
             self.authenticated.clear()  # Manual browsing may change the signed-in account.
+            self.credential_authorization = None
+            self.credential_binding = None
             self.control_mode = 'agent'
             self._agent_turn.set()
             await self.notify_control()
@@ -99,6 +104,9 @@ class BrowserSession(BrowserOperations):
         self.control_mode = 'agent'
         self._agent_turn.set()
         self.authenticated.clear()
+        self.credential_binding = None
+        self.credential_authorization = None
+        self.credential_draft_id = None
         self.flow_scope = None
         browser, playwright = self.browser, self.playwright
         self.page = self.context = self.browser = self.playwright = None

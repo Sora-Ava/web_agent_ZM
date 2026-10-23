@@ -30,6 +30,11 @@ def test_url_credential_parameters_and_login_step_validation():
     d=WorkflowDefinition.model_validate(definition)
     assert validate_parameters(d,{},configured().credentials)=={'url':'https://erp.test/login','account':'erp'}
     with pytest.raises(ValueError):validate_parameters(d,{'url':'https://other.test'},configured().credentials)
-    with pytest.raises(ValueError):validate_parameters(d,{'account':'raw-secret'},configured().credentials)
+    # Unknown references are valid until a real login form needs credentials.
+    assert validate_parameters(d,{'account':'missing-ref'},configured().credentials)['account']=='missing-ref'
+    with pytest.raises(ValueError):validate_parameters(d,{'account':'x'*81},configured().credentials)
+    foreign=configured()
+    foreign.credentials_json=SecretStr(json.dumps({'foreign':{'origin':'https://other.test','username':'synthetic-user','password':'synthetic-password'}}))
+    with pytest.raises(ValueError,match='来源'):validate_parameters(d,{'account':'foreign'},foreign.credentials)
     definition['steps'][0]['action']={'kind':'fill','target':{'kind':'css','value':'#x'},'value':'x'}
     with pytest.raises(ValidationError):WorkflowDefinition.model_validate(definition)

@@ -2,6 +2,7 @@ from fastapi import APIRouter, HTTPException, Request
 from pydantic import BaseModel, Field
 
 from .login import LoginController
+from .credentials import validate_credential_reference
 from .workflows.models import LoginSpec, site_key
 from .sessions import BusyError
 
@@ -30,7 +31,7 @@ async def login(body: LoginInput, request: Request):
             spec.credential_ref = body.parameters[spec.credential_parameter]
             spec.credential_parameter = None
         spec = LoginSpec.model_validate(spec.model_dump())
-        state.settings.credentials.resolve(spec.credential_ref, spec.url)
+        validate_credential_reference(spec.credential_ref, spec.url, state.settings.credentials)
         state.repository._no_secrets(spec.model_dump())
         if state.repository.scope and state.repository.scope != site_key(spec.url):
             raise ValueError('来源变化，请先新建录制')

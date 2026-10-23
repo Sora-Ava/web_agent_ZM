@@ -17,14 +17,14 @@ async def test_known_identity_survives_login_redirect_from_business_page(session
     assert session.authenticated[site_key(url)]=='test'
     assert posts==[]
 
-async def test_redirected_success_does_not_trust_unknown_identity(session):
+async def test_redirected_success_reuses_unknown_identity_without_claiming_identity(session):
     url=session.settings.site_url;base=url.split('/demo')[0]
     await session.page.goto(base+'/demo/business')
     await session.page.locator('#logged-in').evaluate('(el)=>el.remove()')
     session.authenticated.clear()
     await session.context.route(url,lambda r:r.fulfill(status=302,headers={'location':base+'/demo/home'}))
     result=await LoginController(session).execute(login_spec(url),{},url)
-    assert result.status=='failed'
+    assert result.status=='success'
     assert session.authenticated=={}
 
 @pytest.fixture

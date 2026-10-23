@@ -20,7 +20,7 @@ class CommandInput(BaseModel):
     def strip_instruction(cls, value):
         if not value.strip():
             raise ValueError('指令不能为空')
-        return value.strip()
+        return value
 
 
 @router.get('/health')
@@ -85,11 +85,18 @@ async def return_control(request: Request):
 
 @router.post('/commands', status_code=202)
 async def command(body: CommandInput, request: Request):
+    from .credential_intents import CredentialClarification, parse_credential_intent
+    try:
+        intent = parse_credential_intent(body.instruction)
+    except CredentialClarification as exc:
+        raise HTTPException(422, str(exc))
+    if intent is not None:
+        request.app.state.settings.register_secrets(intent.secret_values())
     session = request.app.state.session
     if session.status != 'ready':
         raise HTTPException(409, '请先启动浏览器')
     try:
-        return {'id': await request.app.state.runner.submit(body.instruction)}
+        return {'id': await request.app.state.runner.submit(body.instruction, credential_intent=intent)}
     except BusyError:
         raise HTTPException(409, '已有指令正在执行')
 

@@ -39,32 +39,58 @@ class CommandRunner:
         self.commands = deque(maxlen=100)
         self.task = None
         self.repository = repository
+        self.session.login_recording = repository.login_recording if repository else None
         self.workflows = None
         self.tasks = None
 
-    async def submit(self, instruction):
+    async def submit(self, instruction, credential_intent=None):
+        from .credential_intents import parse_credential_intent
+        credential_intent = credential_intent or parse_credential_intent(instruction)
+        if credential_intent is not None:
+            self.session.settings.register_secrets(credential_intent.secret_values())
+            instruction = credential_intent.display_instruction
         lease = self.session.reserve()
         await lease.__aenter__()
         if self.tasks:
             self.tasks.authoring = True
         command = {'id': uuid4().hex, 'instruction': self.session.settings.redact(instruction), 'status': 'running', 'result': None}
         self.commands.append(command)
-        self.task = asyncio.create_task(self._run(command, instruction, lease))
+        self.task = asyncio.create_task(self._run(command, instruction, lease, credential_intent))
         return command['id']
 
-    async def _run(self, command, instruction, lease):
+    async def _run(self, command, instruction, lease, credential_intent=None):
         from .contracts import ActionResult
+        submitted_login = False
         async def emit(event):
-            if self.repository and event.get('record_action') and event.get('result', {}).get('status') == 'success':
+            nonlocal submitted_login
+            credential = event.get('credential_record')
+            if self.repository and credential and event.get('result', {}).get('status') == 'success':
+                if credential['field'] == 'submit':
+                    submitted_login = True
+                    self.session.credential_binding = None
+                    event['result']['message'] = '登录提交已执行，结果待确认'
+                try:
+                    from .workflows.models import site_key
+                    if site_key(event.get('url_after') or event['url_before']) != credential['origin']:
+                        raise ValueError('登录来源变化')
+                    self.repository.login_recording.record(credential, command['id'], event['url_before'])
+                except ValueError:
+                    self.repository.warn('登录操作未能关联到当前草稿，请重新明确填写账号和密码')
+            elif self.repository and event.get('record_action') and event.get('result', {}).get('status') == 'success':
                 from .contracts import BrowserAction
                 try:
                     self.repository.record(BrowserAction.model_validate(event['record_action']), command['id'], command['instruction'], event['url_before'], event.get('url_after'))
                 except ValueError:
                     self.repository.warn('部分操作未记录：流程仅支持单个来源，切换网站请新建录制，并检查草稿完整性')
-            await self.bus.publish({key: value for key, value in event.items() if key not in ('record_action', 'url_before', 'url_after')})
+            await self.bus.publish({key: value for key, value in event.items() if key not in ('record_action', 'credential_record', 'url_before', 'url_after')})
         try:
             await self.bus.publish({'type': 'command_started', 'command': dict(command)})
-            result = await self.agent.run(instruction, self.session, emit=emit)
+            if self.repository:
+                self.session.credential_draft_id = self.repository.draft()['id']
+            private = {"credential_intent": credential_intent} if credential_intent is not None else {}
+            result = await self.agent.run(instruction, self.session, emit=emit, **private)
+            if submitted_login and result.status == 'success':
+                result = result.model_copy(update={'message': '登录提交已执行，结果待确认'})
             command.update(status='finished', result=result.model_dump())
             if self.repository and result.status != 'success':
                 self.repository.warn('存在未完成指令：仅保留已成功动作，请检查后确认保存')

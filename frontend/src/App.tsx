@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState } from 'react';
 import { CircleDot, Command as CommandIcon, ExternalLink, Globe2, Layers3, LoaderCircle, Play, Plus, Power, Save, Terminal, Workflow, Trash2 } from 'lucide-react';
 import { api, socketUrl, type Snapshot } from './api';
-import type { Definition, Proposal, WorkflowRecord } from './workflows';
+import type { Definition, Proposal, WorkflowRecord, PendingLoginProposal, RecordingProposal } from './workflows';
+import LoginConfirmation from './components/LoginConfirmation';
 import CommandPanel from './components/CommandPanel';
 import LoginPanel from './components/LoginPanel';
 import BrowserView from './components/BrowserView';
@@ -27,6 +28,7 @@ export default function App(){
  const [taskRecord,setTaskRecord]=useState<TaskRecord|null>(null);
  const taskRequest=useRef(0);
  const [editor,setEditor]=useState<EditorState|null>(null);
+ const [loginConfirmation,setLoginConfirmation]=useState<PendingLoginProposal|null>(null);
  const [showLogin,setShowLogin]=useState(false);
  const [showDiagnostics,setShowDiagnostics]=useState(false);
  const [deleting,setDeleting]=useState<DeleteTarget|null>(null);
@@ -91,8 +93,12 @@ export default function App(){
  }
  async function prepareSave(){
   setPending(true);setError('');
-  try{const proposal=await api<Proposal>('/recording/proposal',{method:'POST',body:JSON.stringify({use_model:true})});setEditor({proposal,record:null});}
+  try{acceptProposal(await api<RecordingProposal>('/recording/proposal',{method:'POST',body:JSON.stringify({use_model:true})}));}
   catch(e){setError((e as Error).message);}finally{setPending(false);}
+ }
+ function acceptProposal(proposal:RecordingProposal){
+  if(proposal.definition===null){setLoginConfirmation(proposal);setEditor(null);}
+  else{setLoginConfirmation(null);setEditor({proposal,record:null});}
  }
  async function save(definition:Definition){
   if(!editor)return;
@@ -160,5 +166,6 @@ export default function App(){
    {showDiagnostics&&<DiagnosticsPanel onClose={()=>setShowDiagnostics(false)}/>}
   {deleting&&<DeleteDialog target={deleting} onConfirm={confirmDelete} onClose={()=>setDeleting(null)}/>}
   {editor&&<WorkflowEditor proposal={editor.proposal} editing={!!editor.record} onSave={save} onClose={()=>setEditor(null)}/>}
+  {loginConfirmation&&<LoginConfirmation proposal={loginConfirmation} onResult={acceptProposal} onClose={()=>setLoginConfirmation(null)}/>}
  </div>;
 }
