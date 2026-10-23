@@ -51,7 +51,8 @@ def create_app(settings=None, session=None):
     app.state.settings = settings
     app.state.session = session
     app.state.bus = EventBus()
-    app.state.repository = WorkflowRepository(settings.database_path, secrets=[settings.llm_api_key.get_secret_value(), *[secret.get_secret_value() for secret in settings.credentials.secrets()]], credentials=settings.credentials)
+    session.control_listener = app.state.bus.publish
+    app.state.repository = WorkflowRepository(settings.database_path, secrets=settings.secret_values, credentials=settings.credentials)
     app.state.runner = CommandRunner(session, app.state.bus, app.state.repository)
     app.state.tasks = TaskService(session, TaskRepository(app.state.repository), app.state.bus, app.state.runner)
     session.downloads.bind_repository(app.state.tasks.repository)

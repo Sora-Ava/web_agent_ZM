@@ -30,6 +30,8 @@ class RecoveryRuntime:
     async def execute(self, action, step, index, total):
         before = await snapshot(self.session)
         result = await self.session.execute(action)
+        if result.scope_violation:
+            return result
         if result.status == 'success':
             return result
         await self.boundary()
@@ -61,6 +63,8 @@ class RecoveryRuntime:
             await self.boundary()
             before = await snapshot(self.session)
             result = await self.session.execute(action)
+            if result.scope_violation:
+                return result
             if result.status == 'success':
                 return result
             evidence = await completed(self.session, action, before)
@@ -76,6 +80,7 @@ class RecoveryRuntime:
             await self.boundary()
             if not await browser_alive(self.session):
                 raise FatalRecovery('浏览器不可用，已停止后续派发')
+            revision = self.session.control_revision
             observation = await self.session.observe()
             started = time.monotonic()
             self.calls += 1
@@ -89,6 +94,9 @@ class RecoveryRuntime:
                         'elapsed_s': round(time.monotonic() - started, 2),
                         'result': {'status': 'success' if target else 'failed', 'message': f'第 {attempt}/2 次恢复请求：' + ('获得定位建议' if target else '无可用定位建议')}})
             await self.boundary()
+            if revision != self.session.control_revision:
+                before = await snapshot(self.session)
+                continue  # Manual browsing invalidated this locator proposal.
             # A download may have completed while the provider was responding.
             evidence = await completed(self.session, action, before)
             if evidence:
@@ -98,6 +106,8 @@ class RecoveryRuntime:
             candidate = action.model_copy(update={'target': target}, deep=True)
             before = await snapshot(self.session)
             result = await self.session.execute(candidate)
+            if result.scope_violation:
+                return result
             await self.boundary()
             evidence = await completed(self.session, candidate, before) if result.status != 'success' else None
             if evidence:

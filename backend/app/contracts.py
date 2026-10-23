@@ -40,6 +40,8 @@ class ActionResult(BaseModel):
     message: str
     file_id: str | None = None
     effect_started: bool = False
+    scope_violation: bool = False
+    credential_record: dict | None = Field(default=None, exclude=True, repr=False)
 
 
 class PageObservation(BaseModel):
@@ -49,6 +51,7 @@ class PageObservation(BaseModel):
 
 
 class SessionState(BaseModel):
+    control_mode: Literal['agent', 'requesting', 'manual'] = 'agent'
     status: Literal['idle', 'starting', 'ready', 'running', 'failed', 'closed']
     current_url: str | None = None
 

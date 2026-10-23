@@ -7,7 +7,7 @@ from ..sessions import BusyError
 from .models import WorkflowDefinition
 from .repository import VersionConflict
 from .suggestions import ParameterSuggester
-from ..contracts import DeleteConfirmed
+from ..contracts import DeleteConfirmed, LocatorSpec
 
 router = APIRouter(prefix='/api')
 
@@ -24,6 +24,13 @@ class VersionInput(SaveInput):
 
 class ProposalInput(BaseModel):
     use_model: bool = True
+
+
+class LoginConfirmationInput(BaseModel):
+    attempt_id: str
+    revision: str
+    target: LocatorSpec
+    confirmed: Literal[True]
 
 
 class RunInput(BaseModel):
@@ -67,6 +74,8 @@ async def reset_recording(request: Request):
     request.app.state.runner.agent.history = []
     request.app.state.runner.commands.clear()
     request.app.state.tasks.authoring = True
+    request.app.state.session.credential_binding = None
+    request.app.state.session.credential_authorization = None
     return request.app.state.repository.reset_draft()
 
 
@@ -77,12 +86,27 @@ async def proposal(body: ProposalInput, request: Request):
         raise HTTPException(409, '请等待当前操作完成')
     try:
         result = state.repository.proposal()
-        if body.use_model:
+        if result['definition'] is None:
+            if state.session.control_mode != 'agent':
+                raise BusyError('请先交还浏览器控制权')
+            result['login_confirmation'] = await state.repository.login_recording.candidates(state.session)
+        elif body.use_model:
             suggester = ParameterSuggester(state.settings)
             definition, calls = await suggester.suggest(WorkflowDefinition.model_validate(result['definition']))
             result.update(definition=definition.model_dump(), suggestion_source=suggester.source, model_calls=calls)
         return result
-    except ValueError as exc:
+    except (ValueError, BusyError) as exc:
+        failure(exc)
+
+
+@router.post('/recording/confirm-login')
+async def confirm_login(body: LoginConfirmationInput, request: Request):
+    state = request.app.state
+    try:
+        async with state.session.reserve():
+            await state.repository.login_recording.confirm(state.session, body.attempt_id, body.target, body.revision)
+        return state.repository.proposal()
+    except (ValueError, BusyError) as exc:
         failure(exc)
 
 

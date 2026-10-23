@@ -1,5 +1,6 @@
 """Validated browser operations; no model-supplied JavaScript is evaluated."""
 import asyncio
+from contextlib import asynccontextmanager, suppress
 import logging
 from uuid import uuid4
 from urllib.parse import urlsplit, urlunsplit
@@ -18,16 +19,18 @@ OBSERVE = r'''() => {
    while(node=walker.nextNode()){if(visible(node.parentElement)){const t=node.textContent.trim();if(t)texts.push(t)}}
    return texts.join(' ');
  }
+ const ids=window.__credentialNodes ||= {nodes:new WeakMap(),next:0,prefix:Date.now().toString(36)+Math.random().toString(36)};
+ function nodeId(el){if(!ids.nodes.has(el))ids.nodes.set(el,ids.prefix+':'+String(++ids.next));return ids.nodes.get(el)}
  const text=safeText(document.body);
  const elements=[];
  for(const el of document.querySelectorAll('button,a,input,textarea,select,[role],[contenteditable="true"]')){
-   if(el.matches('[type=password],[type=hidden]') || el.closest('[hidden],[aria-hidden="true"]') || !el.getClientRects().length || getComputedStyle(el).visibility==='hidden')continue;
+   if(el.matches('[type=hidden]') || el.closest('[hidden],[aria-hidden="true"]') || !el.getClientRects().length || getComputedStyle(el).visibility==='hidden')continue;
    const tag=el.tagName.toLowerCase();
    const label=safeText(el.labels?.[0]);
    const name=el.getAttribute('aria-label') || label || (['input','textarea'].includes(tag)||el.isContentEditable ? el.getAttribute('placeholder')||'' : safeText(el));
-   const role=el.getAttribute('role') || (tag==='input'&&el.type==='search'?'searchbox':({button:'button',a:'link',input:'textbox',textarea:'textbox',select:'combobox'}[tag]));
+   const role=el.type==='password'?null:el.getAttribute('role') || (tag==='input'&&el.type==='search'?'searchbox':({button:'button',a:'link',input:'textbox',textarea:'textbox',select:'combobox'}[tag]));
    const selector=el.id&&document.querySelectorAll('#'+CSS.escape(el.id)).length===1?'#'+CSS.escape(el.id):null;
-   elements.push({role,name:name.slice(0,200),label:label?.slice(0,200),selector,tag,disabled:!!el.disabled});
+   elements.push({node_id:nodeId(el),form_id:nodeId(el.form || document.documentElement),input_type:tag==='input'?el.type:null,role,name:name.slice(0,200),label:label?.slice(0,200),selector,tag,disabled:!!el.disabled});
  }
  return {text:text.slice(0,16000),elements:elements.slice(0,150)};
 }'''
@@ -76,7 +79,62 @@ class BrowserOperations:
         safe = self.settings.scrub(data)
         return PageObservation(url=urlunsplit((parsed.scheme, parsed.netloc, parsed.path, '', '')), **safe)
 
+    @asynccontextmanager
+    async def navigation_scope(self):
+        """Chromium Fetch sees every redirect hop, unlike Playwright route()."""
+        self.require_page()
+        scope = origin(web_url(self.flow_scope or ''))
+        cdp = await self.context.new_cdp_session(self.page)
+        blocked = {'value': False}
+        try:
+            frame = (await cdp.send('Page.getFrameTree'))['frameTree']['frame']['id']
+            async def paused(event):
+                allowed = True
+                if event.get('frameId') == frame:
+                    try:
+                        allowed = origin(web_url(event['request']['url'])) == scope
+                    except ValueError:
+                        allowed = False
+                method = 'Fetch.continueRequest' if allowed else 'Fetch.failRequest'
+                args = {'requestId': event['requestId']}
+                if not allowed:
+                    blocked['value'] = True
+                    args['errorReason'] = 'BlockedByClient'
+                with suppress(Exception):
+                    await cdp.send(method, args)
+            cdp.on('Fetch.requestPaused', paused)
+            await cdp.send('Fetch.enable', {'patterns': [{'resourceType': 'Document', 'requestStage': 'Request'}]})
+            yield blocked
+        finally:
+            with suppress(Exception):
+                await cdp.detach()
+
+    def validate_flow_page(self, blocked):
+        if blocked['value'] or origin(self.page.url) != origin(self.flow_scope):
+            raise ValueError('页面跳转超出标准流程来源')
+
+    async def navigate_flow_entry(self, url):
+        if origin(web_url(url)) != origin(self.flow_scope):
+            raise ValueError('入口不属于标准流程来源')
+        async with self.navigation_scope() as blocked:
+            await self.page.goto(url, wait_until='domcontentloaded')
+            self.validate_flow_page(blocked)
+
     async def execute(self, action: BrowserAction, *, generic=False) -> ActionResult:
+        if generic:
+            return await self._execute(action, generic=True)
+        result = None
+        try:
+            async with self.navigation_scope() as blocked:
+                result = await self._execute(action)
+                self.validate_flow_page(blocked)
+                return result
+        except Exception:
+            return ActionResult(status='failed', message='操作失败，请检查页面是否超出标准流程来源', scope_violation=True,
+                                effect_started=bool(result and (result.effect_started or
+                                    (action.kind == 'download' and result.status == 'success'))))
+
+    async def _execute(self, action: BrowserAction, *, generic=False) -> ActionResult:
         effect_started = False
         try:
             self.require_page()

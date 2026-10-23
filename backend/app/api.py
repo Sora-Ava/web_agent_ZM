@@ -20,7 +20,7 @@ class CommandInput(BaseModel):
     def strip_instruction(cls, value):
         if not value.strip():
             raise ValueError('指令不能为空')
-        return value.strip()
+        return value
 
 
 @router.get('/health')
@@ -39,7 +39,7 @@ async def start(request: Request):
     try:
         async with session.reserve():
             request.app.state.tasks.authoring = True
-            await session.start()
+            await session.start(visible=True)
             request.app.state.runner.agent.history = []
             session.status = 'ready'
             await request.app.state.bus.publish({'type': 'session', 'message': '浏览器已就绪，请指定要访问的网址'})
@@ -53,20 +53,50 @@ async def start(request: Request):
 @router.delete('/session')
 async def close(request: Request):
     try:
-        async with request.app.state.session.reserve():
+        async with request.app.state.session.reserve(allow_manual=True):
             await request.app.state.session.close()
         return request.app.state.runner.snapshot()
     except BusyError:
         raise HTTPException(409, '浏览器忙碌，请等待当前指令完成')
 
 
+@router.post('/session/takeover')
+async def takeover(request: Request):
+    try:
+        await request.app.state.session.request_takeover()
+        request.app.state.tasks.wake()
+        return request.app.state.runner.snapshot()
+    except ValueError:
+        raise HTTPException(409, '请先启动浏览器')
+
+
+@router.post('/session/return-control')
+async def return_control(request: Request):
+    state = request.app.state
+    try:
+        await state.session.return_control()
+        state.runner.agent.history = []
+        state.repository.warn('人工操作未录制，请检查草稿完整性后再保存标准流程')
+        state.tasks.wake()
+        return state.runner.snapshot()
+    except (BusyError, ValueError) as exc:
+        raise HTTPException(409, str(exc))
+
+
 @router.post('/commands', status_code=202)
 async def command(body: CommandInput, request: Request):
+    from .credential_intents import CredentialClarification, parse_credential_intent
+    try:
+        intent = parse_credential_intent(body.instruction)
+    except CredentialClarification as exc:
+        raise HTTPException(422, str(exc))
+    if intent is not None:
+        request.app.state.settings.register_secrets(intent.secret_values())
     session = request.app.state.session
     if session.status != 'ready':
         raise HTTPException(409, '请先启动浏览器')
     try:
-        return {'id': await request.app.state.runner.submit(body.instruction)}
+        return {'id': await request.app.state.runner.submit(body.instruction, credential_intent=intent)}
     except BusyError:
         raise HTTPException(409, '已有指令正在执行')
 

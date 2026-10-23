@@ -8,4 +8,6 @@ export type Definition = {schema_version?:2;name:string;site_key:string;entry_ur
 export type WorkflowSummary = {id:string;version:number;name:string;site_key:string};
 export type WorkflowRecord = {id:string;version:number;versions:number[];definition:Definition;created_at:string};
 export type Proposal = {definition:Definition;revision?:string;warnings:string[];suggestion_source:'recording'|'model';model_calls:number};
+export type PendingLoginProposal = Omit<Proposal,'definition'> & {definition:null;revision:string;login_confirmation:{message:string;attempts:{id:string;status:'incomplete'|'awaiting_confirmation'|'superseded';fields:string[];origin:string;candidates:{label:string;target:Locator}[]}[]}};
+export type RecordingProposal = Proposal | PendingLoginProposal;
 export type WorkflowRun = {id:string;flow_id:string;name:string;version:number;parameters:Record<string,string>;status:string;model_calls:number;steps:{id:string;name:string;index:number;total:number;result:{status:string;message:string}}[];result:{status:string;message:string;file_ids:string[];model_calls:number}|null};

@@ -14,17 +14,17 @@ def credentials(settings,url):
     settings.__dict__.pop('credentials',None)
 
 
-async def test_explicit_login_reuses_and_account_switch_is_rejected(session):
+async def test_explicit_login_reuses_current_account_for_different_reference(session):
     from app.login import LoginController
     await session.close();await session.start()
     credentials(session.settings,session.settings.site_url)
     login=LoginController(session);spec=login_spec(session.settings.site_url)
     assert (await login.execute(spec,{},spec.url)).status=='success'
     before=session.page.url
-    assert (await login.execute(spec,{},spec.url)).message=='复用已验证登录会话'
+    assert (await login.execute(spec,{},spec.url)).message=='复用当前已登录会话'
     assert session.page.url==before
     spec.credential_ref='other'
-    assert (await login.execute(spec,{},spec.url)).status=='failed'
+    assert (await login.execute(spec,{},spec.url)).status=='success'
     assert await session.page.locator('#logged-in').is_visible()
 
 
@@ -79,7 +79,7 @@ async def test_executor_does_not_navigate_away_from_reusable_login(session):
         assert (await WorkflowExecutor(session).execute(d,{})).status=='success'
     assert len(requests)==1
 
-async def test_known_account_conflict_is_rejected_even_off_success_page(session):
+async def test_missing_success_marker_still_requires_a_real_verified_login(session):
     from app.login import LoginController
     credentials(session.settings,session.settings.site_url)
     spec=login_spec(session.settings.site_url);spec.credential_ref='other'
@@ -90,7 +90,8 @@ async def test_known_account_conflict_is_rejected_even_off_success_page(session)
     calls=[];session.page.on('request',lambda r:calls.append(1) if r.url.endswith('/demo/auth') else None)
     result=await LoginController(session).execute(spec,{},spec.url)
     assert result.status=='failed'
-    assert calls==[]
+    assert calls==[1]
+    assert session.authenticated=={}
 
 async def test_uncertain_export_does_not_trigger_login_retry(session,monkeypatch):
     from workflow_samples import sample_with_login
